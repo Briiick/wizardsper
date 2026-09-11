@@ -49,7 +49,7 @@ public struct ModelBundle: @unchecked Sendable {
             throw WizardError.modelsMissing(tokenizerURL.path)
         }
 
-        let config = try NemotronConfig(contentsOf: metadataURL)
+        let declared = try NemotronConfig(contentsOf: metadataURL)
         let tokenizer = try NemotronTokenizer(contentsOf: tokenizerURL)
 
         // Loads run concurrently; the 590 MB encoder dominates and there is no
@@ -62,12 +62,17 @@ public struct ModelBundle: @unchecked Sendable {
         async let decoder = loadModel(directory, "decoder.mlmodelc", onNeuralEngine: false)
         async let joint = loadModel(directory, "joint.mlmodelc", onNeuralEngine: false)
 
+        // The compiled encoder, not the sidecar metadata, is the authority on
+        // the mel budget and the hidden dimension.
+        let encoderModel = try await encoder
+        let config = try declared.reconciled(withEncoder: encoderModel.modelDescription)
+
         return ModelBundle(
             directory: directory,
             config: config,
             tokenizer: tokenizer,
             preprocessor: try await preprocessor,
-            encoder: try await encoder,
+            encoder: encoderModel,
             decoder: try await decoder,
             joint: try await joint)
     }

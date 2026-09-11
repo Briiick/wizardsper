@@ -1,3 +1,4 @@
+import CoreML
 import Foundation
 
 /// A tier's `metadata.json`, plus the values derived from it.
@@ -55,6 +56,94 @@ public struct NemotronConfig: Sendable, Equatable {
 
     public var encoderMelShape: [Int] { [1, melFeatures, totalMelFrames] }
     public var decoderStateShape: [Int] { [decoderLayers, 1, decoderHidden] }
+
+    /// Memberwise, for `reconciled(withEncoder:)` to build an adjusted copy.
+    private init(
+        melFeatures: Int, chunkMelFrames: Int, chunkMilliseconds: Int, preEncodeCache: Int,
+        totalMelFrames: Int, vocabSize: Int, blankIndex: Int, encoderDim: Int,
+        decoderHidden: Int, decoderLayers: Int, cacheChannelShape: [Int], cacheTimeShape: [Int]
+    ) {
+        self.melFeatures = melFeatures
+        self.chunkMelFrames = chunkMelFrames
+        self.chunkMilliseconds = chunkMilliseconds
+        self.preEncodeCache = preEncodeCache
+        self.totalMelFrames = totalMelFrames
+        self.vocabSize = vocabSize
+        self.blankIndex = blankIndex
+        self.encoderDim = encoderDim
+        self.decoderHidden = decoderHidden
+        self.decoderLayers = decoderLayers
+        self.cacheChannelShape = cacheChannelShape
+        self.cacheTimeShape = cacheTimeShape
+    }
+
+    /// Take the encoder's own declared shapes over `metadata.json`.
+    ///
+    /// `metadata.json` is a sidecar written by the conversion script, not
+    /// something CoreML enforces. The compiled encoder is the authority on what
+    /// it actually emits, and the two can drift — a re-converted tier shipped
+    /// with a stale sidecar would have every downstream buffer sized wrong, and
+    /// the first symptom would be a shape error deep inside the RNN-T loop
+    /// rather than at load.
+    ///
+    /// The encoder declares `mel` as `[1, melFeatures, totalMelFrames]` and
+    /// `encoded` as `[1, encoderDim, encoderOutputFrames]`, which pins the mel
+    /// budget and the hidden dimension between them.
+    public func reconciled(withEncoder description: MLModelDescription) throws -> NemotronConfig {
+        func shape(_ name: String, _ table: [String: MLFeatureDescription]) -> [Int]? {
+            guard let constraint = table[name]?.multiArrayConstraint else { return nil }
+            let dimensions = constraint.shape.map(\.intValue)
+            return dimensions.contains(0) ? nil : dimensions
+        }
+
+        var melFeatures = self.melFeatures
+        var totalMelFrames = self.totalMelFrames
+        var encoderDim = self.encoderDim
+
+        if let mel = shape("mel", description.inputDescriptionsByName), mel.count == 3 {
+            if mel[1] != melFeatures {
+                Log.model.notice(
+                    "encoder declares \(mel[1]) mel bins; metadata.json said \(self.melFeatures)")
+                melFeatures = mel[1]
+            }
+            if mel[2] != totalMelFrames {
+                Log.model.notice(
+                    "encoder declares \(mel[2]) mel frames; metadata.json said \(self.totalMelFrames)")
+                totalMelFrames = mel[2]
+            }
+        }
+
+        if let encoded = shape("encoded", description.outputDescriptionsByName), encoded.count == 3 {
+            if encoded[1] != encoderDim {
+                Log.model.notice(
+                    "encoder declares a hidden dimension of \(encoded[1]); metadata.json said \(self.encoderDim)")
+                encoderDim = encoded[1]
+            }
+            let chunkFrames = totalMelFrames - preEncodeCache
+            guard encoded[2] == chunkFrames / 8 else {
+                throw WizardError.modelLoadFailed(
+                    "encoder",
+                    underlying:
+                        "declares \(encoded[2]) output frames, but \(chunkFrames) chunk mel frames "
+                        + "subsample 8x to \(chunkFrames / 8) — the tier's files do not match")
+            }
+        }
+
+        let chunkMelFrames = totalMelFrames - preEncodeCache
+        guard chunkMelFrames > 0, chunkMelFrames % 8 == 0 else {
+            throw WizardError.modelLoadFailed(
+                "encoder",
+                underlying: "a \(totalMelFrames)-frame input minus a \(preEncodeCache)-frame cache "
+                    + "leaves \(chunkMelFrames) frames, which is not a usable chunk")
+        }
+
+        return NemotronConfig(
+            melFeatures: melFeatures, chunkMelFrames: chunkMelFrames,
+            chunkMilliseconds: chunkMelFrames * 10, preEncodeCache: preEncodeCache,
+            totalMelFrames: totalMelFrames, vocabSize: vocabSize, blankIndex: blankIndex,
+            encoderDim: encoderDim, decoderHidden: decoderHidden, decoderLayers: decoderLayers,
+            cacheChannelShape: cacheChannelShape, cacheTimeShape: cacheTimeShape)
+    }
 
     public init(contentsOf url: URL) throws {
         let data = try Data(contentsOf: url)
