@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -271,5 +272,51 @@ struct TranscriptPolishTests {
     @Test("both rules can be switched off")
     func canBeDisabled() {
         #expect(TranscriptPolish.none.apply(to: "hello there") == "hello there")
+    }
+}
+
+@Suite("Trailing space", .serialized)
+@MainActor
+struct TrailingSpaceTests {
+
+    private func pasteboardString(
+        _ text: String, trailingSpace: Bool
+    ) async -> (written: String?, outcome: SessionOutcome) {
+        // A private pasteboard, so the tests never touch the user's clipboard.
+        let board = NSPasteboard(name: .init("com.bricken.wizard.tests.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        let outcome = await Paster.deliver(
+            text, restorePasteboard: false, autoPaste: false, trailingSpace: trailingSpace,
+            pasteboard: board)
+        return (board.string(forType: .string), outcome)
+    }
+
+    /// The whole point: dictation happens in bursts, and without this every
+    /// burst arrives welded to the last one.
+    @Test("the space reaches the pasteboard")
+    func spaceIsWritten() async {
+        let result = await pasteboardString("Hello there.", trailingSpace: true)
+        #expect(result.written == "Hello there. ")
+    }
+
+    /// And the half that is easy to get wrong: the transcript the flow bar shows
+    /// and history stores must not carry it, or a re-copy would accumulate
+    /// spaces and every stored record would end in whitespace.
+    @Test("the outcome still carries the clean transcript")
+    func outcomeIsClean() async {
+        let result = await pasteboardString("Hello there.", trailingSpace: true)
+        #expect(result.outcome.transcript == "Hello there.")
+    }
+
+    @Test("switching it off writes exactly the transcript")
+    func canBeDisabled() async {
+        let result = await pasteboardString("Hello there.", trailingSpace: false)
+        #expect(result.written == "Hello there.")
+    }
+
+    @Test("an empty transcript is still not delivered")
+    func emptyIsUntouched() async {
+        let result = await pasteboardString("   ", trailingSpace: true)
+        #expect(result.outcome == .nothing(why: .noSpeech))
     }
 }

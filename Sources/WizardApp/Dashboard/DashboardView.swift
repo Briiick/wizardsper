@@ -180,6 +180,9 @@ struct DashboardView: View {
                 Toggle("Paste into the frontmost app", isOn: $settings.pasteAutomatically)
                 Toggle("Put the old clipboard back afterwards", isOn: $settings.restorePasteboard)
                     .disabled(!settings.pasteAutomatically)
+                Toggle("End with a space", isOn: $settings.appendTrailingSpace)
+                    .help(
+                        "Adds a space after the pasted text so the next dictation does not run into it.")
                 Toggle("Show the flow bar while dictating", isOn: $settings.showFlowBar)
             }
 

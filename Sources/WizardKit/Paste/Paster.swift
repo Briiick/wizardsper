@@ -60,7 +60,8 @@ public enum Paster {
     /// three the transcript is still recoverable, so none of them is a failure);
     /// `.failed` is reserved for the one case where the text reached neither.
     public static func deliver(
-        _ text: String, restorePasteboard: Bool, autoPaste: Bool
+        _ text: String, restorePasteboard: Bool, autoPaste: Bool, trailingSpace: Bool = false,
+        pasteboard: NSPasteboard = .general
     ) async -> SessionOutcome {
 
         // A hold that produced only silence or punctuation-free whitespace has
@@ -71,7 +72,14 @@ public enum Paster {
             return .nothing(why: .noSpeech)
         }
 
-        let pasteboard = NSPasteboard.general
+        // The space goes on the pasteboard, not into `text`. Dictation happens
+        // in bursts — a sentence, a pause, another sentence — and without it
+        // every burst arrives welded to the last. But the transcript itself must
+        // stay clean: it is what the flow bar shows and what history stores, and
+        // a stored trailing space would accumulate through any later re-copy.
+        // So the two diverge here, deliberately, and every `return` below still
+        // carries the original.
+        let delivered = trailingSpace ? text + " " : text
 
         // Captured only when it will be used. Reading another app's pasteboard
         // is not free — macOS treats it as an access worth telling the user
@@ -88,7 +96,7 @@ public enum Paster {
         // would overwrite their fresh copy with our stale snapshot.
         let ownedChangeCount = pasteboard.clearContents()
 
-        guard pasteboard.setString(text, forType: .string) else {
+        guard pasteboard.setString(delivered, forType: .string) else {
             // `clearContents()` has already destroyed the user's clipboard by this
             // point. Returning without putting the snapshot back would cost them
             // both the transcript and whatever they had copied, for a write that

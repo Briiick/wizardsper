@@ -435,7 +435,8 @@ public final class DictationCoordinator {
         let outcome = await Paster.deliver(
             transcript,
             restorePasteboard: settings.restorePasteboard,
-            autoPaste: settings.pasteAutomatically)
+            autoPaste: settings.pasteAutomatically,
+            trailingSpace: settings.appendTrailingSpace)
         guard sessionID == id else { return }
         finalize(outcome, for: id, duration: held)
     }

@@ -20,6 +20,9 @@ public final class Settings {
 
     /// Deliver Cmd-V after copying. When off, every session ends as `.copied`.
     public var pasteAutomatically = true { didSet { persist() } }
+    /// Put a space after the pasted text, so the next dictation does not weld
+    /// itself to the end of this one.
+    public var appendTrailingSpace = true { didSet { persist() } }
     /// Restore whatever was on the pasteboard before the paste.
     public var restorePasteboard = true { didSet { persist() } }
     public var showFlowBar = true { didSet { persist() } }
@@ -51,6 +54,7 @@ public final class Settings {
         public var framing: FramingPolicy
         public var pasteAutomatically: Bool
         public var restorePasteboard: Bool
+        public var appendTrailingSpace: Bool
         public var showFlowBar: Bool
         public var keepHistory: Bool
         public var historyRetentionDays: Int
@@ -64,6 +68,7 @@ public final class Settings {
         Snapshot(
             chord: chord, tier: tier, framing: framing,
             pasteAutomatically: pasteAutomatically, restorePasteboard: restorePasteboard,
+            appendTrailingSpace: appendTrailingSpace,
             showFlowBar: showFlowBar, keepHistory: keepHistory,
             historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds,
             inputGain: inputGain, vocabulary: vocabulary, polish: polish)
@@ -81,6 +86,7 @@ public final class Settings {
         static let framing = "framing"
         static let pasteAutomatically = "pasteAutomatically"
         static let restorePasteboard = "restorePasteboard"
+        static let appendTrailingSpace = "appendTrailingSpace"
         static let showFlowBar = "showFlowBar"
         static let keepHistory = "keepHistory"
         static let historyRetentionDays = "historyRetentionDays"
@@ -113,6 +119,9 @@ public final class Settings {
         }
         if defaults.object(forKey: Key.restorePasteboard) != nil {
             restorePasteboard = defaults.bool(forKey: Key.restorePasteboard)
+        }
+        if defaults.object(forKey: Key.appendTrailingSpace) != nil {
+            appendTrailingSpace = defaults.bool(forKey: Key.appendTrailingSpace)
         }
         if defaults.object(forKey: Key.showFlowBar) != nil {
             showFlowBar = defaults.bool(forKey: Key.showFlowBar)
@@ -152,6 +161,7 @@ public final class Settings {
         defaults.set(try? encoder.encode(framing), forKey: Key.framing)
         defaults.set(pasteAutomatically, forKey: Key.pasteAutomatically)
         defaults.set(restorePasteboard, forKey: Key.restorePasteboard)
+        defaults.set(appendTrailingSpace, forKey: Key.appendTrailingSpace)
         defaults.set(showFlowBar, forKey: Key.showFlowBar)
         defaults.set(keepHistory, forKey: Key.keepHistory)
         defaults.set(historyRetentionDays, forKey: Key.historyRetentionDays)
