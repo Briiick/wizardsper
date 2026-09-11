@@ -102,7 +102,14 @@ struct FlowBarView: View {
         // fill style, which loses the vibrancy and comes out flat grey. The pill
         // went visibly lifeless when this was a fill, and nothing else about it
         // had changed.
-        .background(.ultraThinMaterial, in: shape)
+        //
+        // `regular` rather than `ultraThin`: the pill floats over whatever the
+        // user is working in, and a thin material lets that show through until
+        // the transcript is competing with a document for legibility. A heavier
+        // material is more opaque, so the text sits on something solid — and it
+        // still reads as macOS chrome in both appearances, which is the reason
+        // this is a material and not a colour.
+        .background(.regularMaterial, in: shape)
         .overlay { shape.strokeBorder(borderStyle, lineWidth: 1) }
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: model.outcome)
         .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: transcriptHeight)
