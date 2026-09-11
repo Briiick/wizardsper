@@ -19,16 +19,22 @@ struct LevelBarsView: View {
     /// still track the voice, they just stop overshooting on the way.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    static let barCount = 5
-    static let barWidth: CGFloat = 3.5
-    static let barSpacing: CGFloat = 3
-    static let maxBarHeight: CGFloat = 20
+    // `nonisolated` on all of these: `View` carries main-actor isolation, so a
+    // computed static on one is main-actor bound — and `FlowBarMetrics`, which is
+    // a plain nonisolated enum of numbers, has to read `clusterWidth` to size the
+    // pill. The newest Swift infers its way around this and an older one does
+    // not, so the isolation is stated rather than left to the compiler's mood.
+    // They are all constants; there is nothing here to protect.
+    nonisolated static let barCount = 5
+    nonisolated static let barWidth: CGFloat = 3.5
+    nonisolated static let barSpacing: CGFloat = 3
+    nonisolated static let maxBarHeight: CGFloat = 20
     /// A bar is never fully gone: five stubs in silence still read as a meter
     /// that is listening, where an empty row reads as a broken layout.
-    static let minBarHeight: CGFloat = 3.5
+    nonisolated static let minBarHeight: CGFloat = 3.5
 
     /// Fixed, so the transcript beside it never shifts as the bars move.
-    static var clusterWidth: CGFloat {
+    nonisolated static var clusterWidth: CGFloat {
         CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * barSpacing
     }
 
