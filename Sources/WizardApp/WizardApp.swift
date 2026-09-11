@@ -44,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Latches so the second `applicationShouldTerminate` — the one that arrives
     /// after `reply(toApplicationShouldTerminate:)` — does not start over.
     private var isTerminating = false
+    /// Offered once per launch, not once per hold: the prompt is modal, and
+    /// re-raising it after every dictation would be worse than the problem.
+    private var hasOfferedAccessibility = false
 
     /// How long the pill lingers after the outcome lands. A failure stays up
     /// longer because its text is the only place the reason is shown.
@@ -173,10 +176,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.flowModel.finish(outcome)
             if let text = outcome.transcript { self.status.lastTranscript = text }
+
+            // A transcript that could not be pasted is the one outcome the user
+            // can do something about, so it stays up as long as a failure does
+            // and the grant is offered right here — at the moment they are
+            // looking at the bar wondering why nothing was typed, rather than
+            // buried in a settings pane they have no reason to open.
+            var linger = outcome.isFailure ? self.failureLinger : self.successLinger
+            if case .copied(_, .accessibilityDenied) = outcome {
+                linger = self.failureLinger
+                if !self.hasOfferedAccessibility {
+                    self.hasOfferedAccessibility = true
+                    self.request(.accessibility)
+                }
+            }
             // Exactly one outcome per session reaches here, which is what lets
             // the bar dismiss on a timer instead of guessing when it is done.
-            self.flowBar?.dismiss(
-                after: outcome.isFailure ? self.failureLinger : self.successLinger)
+            self.flowBar?.dismiss(after: linger)
         }
 
         // The coordinator's snapshot carries the live partial transcript.

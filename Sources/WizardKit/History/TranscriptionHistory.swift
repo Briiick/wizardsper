@@ -57,7 +57,7 @@ public struct TranscriptionRecord: Codable, Sendable, Identifiable, Equatable {
             self.init(
                 date: date, text: text, durationSeconds: durationSeconds,
                 tierMilliseconds: tier.chunkMilliseconds, outcome: Outcome.pasted)
-        case .copied(let text):
+        case .copied(let text, _):
             self.init(
                 date: date, text: text, durationSeconds: durationSeconds,
                 tierMilliseconds: tier.chunkMilliseconds, outcome: Outcome.copied)

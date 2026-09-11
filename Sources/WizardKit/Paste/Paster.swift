@@ -104,7 +104,7 @@ public enum Paster {
 
         guard autoPaste else {
             Log.paste.debug("Auto-paste is off; leaving the transcript on the clipboard.")
-            return .copied(text)
+            return .copied(text, why: .autoPasteDisabled)
         }
 
         // Nothing to paste into means nothing to paste: a posted Cmd-V would go
@@ -112,7 +112,7 @@ public enum Paster {
         // be an app the user never pointed at.
         guard let target = NSWorkspace.shared.frontmostApplication else {
             Log.paste.debug("No frontmost application; copied instead of pasting.")
-            return .copied(text)
+            return .copied(text, why: .noTarget)
         }
         // `Bundle.main.bundleIdentifier` is nil for the CLI target, so compare
         // only when we actually have an identity — otherwise a nil-equals-nil
@@ -121,7 +121,7 @@ public enum Paster {
             target.bundleIdentifier == ourBundleID
         {
             Log.paste.debug("Wizard is frontmost; copied instead of pasting into ourselves.")
-            return .copied(text)
+            return .copied(text, why: .noTarget)
         }
 
         // Synthetic events from an untrusted process are dropped by the window
@@ -130,7 +130,7 @@ public enum Paster {
         // is on the clipboard, so this is `.copied`, not `.failed`.
         guard AXIsProcessTrusted() else {
             Log.paste.notice("Accessibility not granted; copied instead of pasting.")
-            return .copied(text)
+            return .copied(text, why: .accessibilityDenied)
         }
 
         guard postCommandV() else {
@@ -138,7 +138,7 @@ public enum Paster {
             // anything — but event creation failing is not normal, so it is
             // logged at error level rather than passed over.
             Log.paste.error("Could not synthesise Cmd-V; copied instead of pasting.")
-            return .copied(text)
+            return .copied(text, why: .accessibilityDenied)
         }
 
         do {

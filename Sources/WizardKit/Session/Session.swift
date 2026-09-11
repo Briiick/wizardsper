@@ -21,20 +21,43 @@ public enum SessionState: Equatable, Sendable {
     case finishing
 }
 
+/// Why a transcript ended up on the clipboard instead of in an app.
+///
+/// Carried rather than discarded because all three look identical to the user —
+/// the text is on the clipboard and nothing was typed — and only one of them is
+/// something they can act on. "Copied to clipboard" with no reason is what makes
+/// a missing Accessibility grant read as the app being broken.
+public enum CopyReason: Sendable, Equatable {
+    /// Posting the key event would be silently dropped, so it was not posted.
+    case accessibilityDenied
+    /// Nothing was focused to paste into.
+    case noTarget
+    /// The user switched auto-paste off.
+    case autoPasteDisabled
+
+    public var explanation: String {
+        switch self {
+        case .accessibilityDenied: return "Copied — allow Accessibility to paste"
+        case .noTarget: return "Copied — nothing was focused"
+        case .autoPasteDisabled: return "Copied to clipboard"
+        }
+    }
+}
+
 /// The single terminal result of a session. Exactly one of these is published
 /// per session, and the flow bar does not dismiss until it sees one.
 public enum SessionOutcome: Sendable, Equatable {
     /// Text was placed on the pasteboard and Cmd-V was delivered to an app.
     case pasted(String)
-    /// Text is on the pasteboard, but there was no app to paste into.
-    case copied(String)
+    /// Text is on the pasteboard, but nothing was typed into an app.
+    case copied(String, why: CopyReason)
     /// The session ended with nothing to show: no speech, or too short.
     case nothing
     case failed(WizardError)
 
     public var transcript: String? {
         switch self {
-        case .pasted(let text), .copied(let text): return text
+        case .pasted(let text), .copied(let text, _): return text
         case .nothing, .failed: return nil
         }
     }
@@ -48,7 +71,7 @@ public enum SessionOutcome: Sendable, Equatable {
     public var summary: String {
         switch self {
         case .pasted: return "Pasted"
-        case .copied: return "Copied to clipboard"
+        case .copied(_, let why): return why.explanation
         case .nothing: return "Nothing heard"
         case .failed(let error): return error.errorDescription ?? "Failed"
         }
@@ -57,7 +80,7 @@ public enum SessionOutcome: Sendable, Equatable {
     public static func == (lhs: SessionOutcome, rhs: SessionOutcome) -> Bool {
         switch (lhs, rhs) {
         case (.pasted(let a), .pasted(let b)): return a == b
-        case (.copied(let a), .copied(let b)): return a == b
+        case (.copied(let a, let x), .copied(let b, let y)): return a == b && x == y
         case (.nothing, .nothing): return true
         case (.failed(let a), .failed(let b)):
             return a.errorDescription == b.errorDescription
