@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observe { [weak self] in self?.coordinator.statusText ?? "" } onChange: { [weak self] text in
             guard let self, !text.isEmpty else { return }
             self.status.statusText = text
-            self.status.isReady = self.coordinator.isReady
+            self.refreshReadiness()
         }
     }
 
@@ -215,13 +215,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try monitor.start()
             hotkey = monitor
             Log.ui.info("Watching for \(self.settings.chord.display, privacy: .public)")
+            refreshReadiness()
         } catch let error as WizardError {
             hotkey = nil
+            status.isReady = false
             status.statusText = error.errorDescription ?? "Cannot watch the keyboard"
             Log.ui.error("Hotkey tap failed: \(self.status.statusText, privacy: .public)")
         } catch {
             hotkey = nil
+            status.isReady = false
             status.statusText = error.localizedDescription
+        }
+    }
+
+    /// "Ready" has to mean the whole chain works, not just that a model loaded.
+    ///
+    /// The event tap is the half users cannot see: with Input Monitoring denied
+    /// the model loads perfectly, the popover said "Ready", and holding the key
+    /// did absolutely nothing — the app looked broken with no explanation on
+    /// screen anywhere.
+    private func refreshReadiness() {
+        let modelReady = coordinator.isReady
+        let triggerReady = hotkey?.isRunning ?? false
+        status.isReady = modelReady && triggerReady
+        if modelReady && !triggerReady {
+            status.statusText =
+                "Model ready, but Wizard cannot see the keyboard — grant Input Monitoring."
+        } else if modelReady {
+            status.statusText = coordinator.statusText
         }
     }
 
@@ -260,20 +281,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.activeTier = tier
         dashboardModel.lastError = nil
 
-        phaseTask = Task { @MainActor in
+        let phases = Task { @MainActor in
             for await phase in await ModelInstaller.shared.events() {
                 self.apply(phase)
             }
         }
+        phaseTask = phases
 
         modelTask = Task { @MainActor in
             do {
                 let directory = try await ModelInstaller.shared.install(tier)
                 guard !Task.isCancelled else { return }
                 await self.coordinator.prepare(tier: tier, directory: directory)
-                self.status.isReady = self.coordinator.isReady
-                self.status.statusText = self.coordinator.statusText
-                self.status.installProgress = nil
+                self.refreshReadiness()
                 self.refreshModelStatus()
             } catch is CancellationError {
                 self.status.statusText = "Download cancelled"
@@ -286,9 +306,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 self.status.statusText = error.localizedDescription
                 self.dashboardModel.lastError = error.localizedDescription
-                self.status.installProgress = nil
             }
-            self.phaseTask?.cancel()
+            // Cleared on every exit, success or not: a failed or cancelled
+            // install used to leave the Model pane showing a progress bar
+            // forever, with no way to get rid of it short of relaunching.
+            self.status.installProgress = nil
+            self.dashboardModel.progress = nil
+            // Cancel *this* subscription, not `self.phaseTask` — by now that may
+            // already be a newer install's, and cancelling it would kill the
+            // progress reporting for a download that has only just started.
+            phases.cancel()
+            self.refreshReadiness()
         }
     }
 
