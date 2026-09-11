@@ -56,10 +56,19 @@ public final class AudioCapture: @unchecked Sendable {
     /// of unbounded work a render thread must not do.
     private let tapContext = TapContext()
 
-    /// Built once, in `init`, because `AVAudioConverter` calls it on every
-    /// convert and a freshly-allocated block per callback would be an
-    /// allocation per audio buffer.
-    private let converterInput: AVAudioConverterInputBlock
+    /// The converter's input source, built once in `init` and held as a real
+    /// Objective-C block.
+    ///
+    /// The `@convention(block)` is load-bearing, not decoration.
+    /// `AVAudioConverterInputBlock` imports into Swift as a plain closure, and
+    /// `convertToBuffer:error:withInputFromBlock:` is declared *without*
+    /// `NS_NOESCAPE` — so handing it a Swift closure makes the compiler bridge
+    /// one to a block on every call, and bridging an escaping closure means
+    /// `_Block_copy`, which mallocs. That is a heap allocation per audio buffer,
+    /// on the real-time render thread, which is precisely what this file
+    /// promises not to do. Storing it already bridged turns that per-call malloc
+    /// into a retain of a block allocated once.
+    private let converterInput: @Sendable @convention(block) (AVAudioPacketCount, UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer?
 
     // MARK: - Main-actor state
 
@@ -221,7 +230,7 @@ public final class AudioCapture: @unchecked Sendable {
     nonisolated private static func makeTapBlock(
         converter: AVAudioConverter,
         output: AVAudioPCMBuffer,
-        inputBlock: @escaping AVAudioConverterInputBlock,
+        inputBlock: @escaping @Sendable @convention(block) (AVAudioPacketCount, UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer?,
         context: TapContext,
         ring: AudioRingBuffer,
         level: LevelBox

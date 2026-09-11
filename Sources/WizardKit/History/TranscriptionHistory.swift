@@ -139,7 +139,7 @@ public final class TranscriptionHistory {
     /// again later; a reload waits for any in-flight write so it cannot read the
     /// file from behind one.
     public func load() async {
-        await writeTask?.value
+        await flush()
         let stored = await store.load()
         let sorted = stored.sorted { $0.date > $1.date }
         let kept = Self.retained(sorted, retentionDays: Settings.shared.historyRetentionDays)
@@ -218,8 +218,17 @@ public final class TranscriptionHistory {
 
     /// Waits for pending writes. Call before the app terminates, or a dictation
     /// finished a moment earlier may never reach disk.
+    ///
+    /// Awaiting the tail once is not enough: a dictation that resumes on the
+    /// main actor while this is suspended chains a *new* save behind the one
+    /// being awaited, and returning then would drop exactly the transcript the
+    /// caller is flushing for. The loop ends as soon as no further save was
+    /// queued behind the one just finished.
     public func flush() async {
-        await writeTask?.value
+        while let pending = writeTask {
+            await pending.value
+            if writeTask == pending { break }
+        }
     }
 
     /// Chains one save behind the last, so a burst of appends is written in the
@@ -274,6 +283,22 @@ private enum HistoryFormat {
     static let version = 1
 }
 
+/// Raised when writing would destroy transcripts that exist nowhere else.
+/// `LocalizedError` because the message ends up on `lastWriteError`, in front of
+/// the user, and "The operation couldn't be completed" would not tell them their
+/// history is sitting in a file the app cannot open.
+private enum HistoryStoreError: LocalizedError {
+    case unpreservedHistory(URL, reason: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unpreservedHistory(let url, let reason):
+            "History was not saved: \(url.lastPathComponent) could not be read or moved aside "
+                + "(\(reason)), and overwriting it would destroy the transcripts it holds."
+        }
+    }
+}
+
 /// All disk access for the history, isolated so the main actor never encodes or
 /// writes, and so writes cannot run concurrently with each other or with a load.
 private actor HistoryStore {
@@ -287,6 +312,12 @@ private actor HistoryStore {
 
     private let fileURL: URL
 
+    /// Why the file on disk is both unreadable and still sitting there, or `nil`
+    /// when writing is safe. Every save rewrites the whole file, so while this is
+    /// set the next dictation would replace transcripts nothing else has a copy
+    /// of with a one-record history. `save` refuses instead.
+    private var unpreservedReason: String?
+
     init(fileURL: URL) {
         self.fileURL = fileURL
     }
@@ -295,6 +326,11 @@ private actor HistoryStore {
     /// reported. An undecodable file is moved aside first, so the user's
     /// transcripts still exist on disk even though this build cannot read them.
     func load() -> [TranscriptionRecord] {
+        // Whatever was blocking writes, this read decides it afresh: a file that
+        // opens now is a file whose contents are back in memory and therefore
+        // safe to rewrite.
+        unpreservedReason = nil
+
         guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
             return []
         }
@@ -304,9 +340,13 @@ private actor HistoryStore {
             data = try Data(contentsOf: fileURL)
         } catch {
             // The file exists but will not open — a permissions or hardware
-            // problem, not a format one, so it is left exactly where it is.
+            // problem, not a format one, so it is left exactly where it is
+            // rather than quarantined over what may be a passing failure. It is
+            // also the only copy of those transcripts, so writing is blocked
+            // until a save can move it aside.
             Log.history.error(
                 "could not read history file: \(error.localizedDescription, privacy: .public)")
+            unpreservedReason = error.localizedDescription
             return []
         }
 
@@ -324,12 +364,36 @@ private actor HistoryStore {
             }
             Log.history.error(
                 "history file could not be decoded: \(error.localizedDescription, privacy: .public)")
-            quarantine()
+            do {
+                try quarantine()
+            } catch {
+                // The undecodable file is still on disk. Letting the next
+                // dictation write over it would turn "this build cannot read
+                // your history" into "your history is gone".
+                Log.history.error(
+                    "could not move unreadable history aside: \(error.localizedDescription, privacy: .public)"
+                )
+                unpreservedReason = error.localizedDescription
+            }
             return []
         }
     }
 
     func save(_ records: [TranscriptionRecord]) throws {
+        if unpreservedReason != nil {
+            // One more attempt before giving up on the write: the collision or
+            // the permission problem that defeated the move may have cleared,
+            // and preserving the old file is what makes this write safe.
+            do {
+                try quarantine()
+                unpreservedReason = nil
+            } catch {
+                unpreservedReason = error.localizedDescription
+                throw HistoryStoreError.unpreservedHistory(
+                    fileURL, reason: error.localizedDescription)
+            }
+        }
+
         try WizardPaths.ensureApplicationSupport()
         // The default file lives in Application Support/Wizard, but a test may
         // hand this actor a URL somewhere else entirely.
@@ -357,9 +421,15 @@ private actor HistoryStore {
         return envelope.records
     }
 
-    /// Moves an undecodable file out of the way so the app can start fresh
-    /// without destroying whatever the user actually said.
-    private func quarantine() {
+    /// Moves an unreadable file out of the way so the app can start fresh
+    /// without destroying whatever the user actually said. Throws when the file
+    /// is still sitting at `fileURL` afterwards, which is the caller's signal
+    /// that writing there would destroy it.
+    private func quarantine() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+            return  // Already gone — nothing left to preserve, nothing to lose.
+        }
+
         let stamp = DateFormatter()
         stamp.locale = Locale(identifier: "en_US_POSIX")
         stamp.dateFormat = "yyyy-MM-dd-HHmmss"
@@ -380,16 +450,10 @@ private actor HistoryStore {
             suffix += 1
         }
 
-        do {
-            try FileManager.default.moveItem(at: fileURL, to: destination)
-            Log.history.notice(
-                "moved unreadable history aside to \(destination.lastPathComponent, privacy: .public)"
-            )
-        } catch {
-            Log.history.error(
-                "could not move unreadable history aside: \(error.localizedDescription, privacy: .public)"
-            )
-        }
+        try FileManager.default.moveItem(at: fileURL, to: destination)
+        Log.history.notice(
+            "moved unreadable history aside to \(destination.lastPathComponent, privacy: .public)"
+        )
     }
 
     private static func makeEncoder() -> JSONEncoder {

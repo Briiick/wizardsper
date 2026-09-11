@@ -205,6 +205,14 @@ reason. Marking the closure `@Sendable` would also detach it, but
 `AVAudioConverter` and `AVAudioPCMBuffer` are not `Sendable` and could not then
 be captured. `wizard-cli listen` exercises this path outside the app.
 
+**The converter's input block must be pre-bridged.** `AVAudioConverterInputBlock`
+imports into Swift as a plain closure, and `convertToBuffer:error:withInputFromBlock:`
+is declared *without* `NS_NOESCAPE`. Passing a Swift closure therefore bridges it
+to an Objective-C block on every call, and bridging an escaping closure means
+`_Block_copy` — a malloc, per audio buffer, on the render thread. Declaring the
+stored property as `@Sendable @convention(block)` bridges it once at init and
+reduces the per-call cost to a retain.
+
 Beyond that, the tap callback does no allocation and takes no locks: preallocated conversion buffers, a hoisted converter input block,
 `vDSP_rmsqv` for the level, and a lock-free SPSC ring for the samples. On
 `AVAudioEngineConfigurationChange` — a device swap, a sample-rate change,
