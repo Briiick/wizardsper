@@ -86,6 +86,10 @@ public final class AudioCapture: @unchecked Sendable {
 
     @MainActor public var isRunning: Bool { running }
 
+    /// Fraction of captured samples the gain stage had to clip, since the last
+    /// `start()`. Read once per session, off the render thread.
+    @MainActor public var clippedFraction: Double { tapContext.clippedFraction }
+
     public init(ring: AudioRingBuffer, level: LevelBox, gain: GainBox = GainBox()) {
         self.ring = ring
         self.level = level
@@ -269,12 +273,22 @@ public final class AudioCapture: @unchecked Sendable {
             var scale = gain.current
             if scale != 1 {
                 vDSP_vsmul(channel, 1, &scale, channel, 1, vDSP_Length(frames))
-                // Clip rather than let gain run the signal past full scale.
-                // Wrapped or out-of-range samples produce a log-mel surface the
-                // model has never seen, which is worse than the quiet original.
+                // Clip rather than let gain run the signal past full scale, and
+                // count how much had to be clipped. The count is the point: a
+                // clipped signal decodes to nothing, and without a number for it
+                // the session can only report "Nothing heard", which sends the
+                // user looking at their microphone instead of at the slider that
+                // actually caused it.
                 var low: Float = -1
                 var high: Float = 1
-                vDSP_vclip(channel, 1, &low, &high, channel, 1, vDSP_Length(frames))
+                var lowCount: vDSP_Length = 0
+                var highCount: vDSP_Length = 0
+                // `vclipc` is `vclip` that also reports how many samples it had
+                // to pull in at each rail, so the count is free.
+                vDSP_vclipc(
+                    channel, 1, &low, &high, channel, 1, vDSP_Length(frames),
+                    &lowCount, &highCount)
+                context.recordClipping(clipped: Int(lowCount + highCount), of: frames)
             }
 
             var rms: Float = 0
@@ -419,6 +433,8 @@ public final class AudioCapture: @unchecked Sendable {
 private final class TapContext: @unchecked Sendable {
     private var pendingInput: AVAudioPCMBuffer?
     private let conversionFailures = Atomic<Int>(0)
+    private let clippedSamples = Atomic<Int>(0)
+    private let totalSamples = Atomic<Int>(0)
 
     /// Render thread: hand this buffer to the next `convert` call.
     func parkPendingInput(_ buffer: AVAudioPCMBuffer) {
@@ -442,7 +458,23 @@ private final class TapContext: @unchecked Sendable {
         conversionFailures.load(ordering: .relaxed)
     }
 
+    /// Render thread. Two relaxed adds per buffer, no branch on the hot path
+    /// beyond the count vDSP already computed.
+    func recordClipping(clipped: Int, of total: Int) {
+        clippedSamples.store(clippedSamples.load(ordering: .relaxed) &+ clipped, ordering: .relaxed)
+        totalSamples.store(totalSamples.load(ordering: .relaxed) &+ total, ordering: .relaxed)
+    }
+
+    /// Fraction of captured samples that hit the rails, 0...1.
+    var clippedFraction: Double {
+        let total = totalSamples.load(ordering: .relaxed)
+        guard total > 0 else { return 0 }
+        return Double(clippedSamples.load(ordering: .relaxed)) / Double(total)
+    }
+
     func resetCounters() {
         conversionFailures.store(0, ordering: .relaxed)
+        clippedSamples.store(0, ordering: .relaxed)
+        totalSamples.store(0, ordering: .relaxed)
     }
 }

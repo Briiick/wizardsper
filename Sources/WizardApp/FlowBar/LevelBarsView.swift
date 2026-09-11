@@ -38,27 +38,48 @@ struct LevelBarsView: View {
                 Capsule(style: .continuous)
                     .fill(tint.gradient)
                     .frame(width: Self.barWidth, height: Self.barHeight(index: index, level: level))
+                    // Per-bar rather than one animation over the cluster: the
+                    // outer bars lag the centre by a few milliseconds, which
+                    // reads as a ripple travelling outwards. It is the only
+                    // source of independent motion left, and because it is a
+                    // fixed delay rather than a level-dependent phase it can
+                    // never make the bars disagree about how loud the room is.
+                    .animation(Self.motion(index: index, reduceMotion: reduceMotion), value: level)
             }
         }
         .frame(width: Self.clusterWidth, height: Self.maxBarHeight)
-        .animation(reduceMotion ? nil : .spring(response: 0.16, dampingFraction: 0.68), value: level)
         // Flattens the five animating bars into one Metal layer, so a level
         // change costs a single composited redraw instead of five.
         .drawingGroup()
         .accessibilityHidden(true)
     }
 
-    /// Height of one bar for a given level.
+    /// A fixed weight per bar: tallest in the middle, tapering outwards.
     ///
-    /// Each bar samples the same level a little further along a sine, so the
-    /// cluster reads as a wave passing through it rather than five copies of one
-    /// meter. The offset is deliberately small: large offsets make the bars look
-    /// like they are measuring different things.
+    /// This used to be a sine whose *phase* was a function of the level, which
+    /// is what made the cluster jitter. Every change in loudness moved each bar
+    /// a different direction by a different amount, so the meter shimmered
+    /// against itself instead of rising and falling as one thing. The shape a
+    /// cluster needs is static; only its size should follow the voice.
+    private static let profile: [Double] = [0.52, 0.80, 1.0, 0.80, 0.52]
+
+    /// Height of one bar for a given level.
     static func barHeight(index: Int, level: Float) -> CGFloat {
         let loudness = normalized(level)
-        let phase = Double(index) * 0.7
-        let wobble = 0.78 + 0.22 * sin(loudness * 6.0 + phase)
-        return max(minBarHeight, CGFloat(loudness * wobble) * maxBarHeight)
+        let weight = profile[min(index, profile.count - 1)]
+        return max(minBarHeight, CGFloat(loudness * weight) * maxBarHeight)
+    }
+
+    /// Critically damped, and a touch slower towards the edges.
+    ///
+    /// `dampingFraction` is 1 rather than the 0.68 this had before: under-damped
+    /// springs overshoot, and five bars overshooting out of step is most of what
+    /// made the meter look nervous.
+    static func motion(index: Int, reduceMotion: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        let distanceFromCentre = abs(index - barCount / 2)
+        return .spring(response: 0.22, dampingFraction: 1.0)
+            .delay(Double(distanceFromCentre) * 0.018)
     }
 
     /// Maps RMS onto 0...1 the way an ear would.

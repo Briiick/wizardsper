@@ -193,7 +193,8 @@ struct TranscriptionHistoryTests {
                 outcome: .copied("x", why: .accessibilityDenied), durationSeconds: 1, tier: .ms560
             )?.outcome
                 == "copied")
-        #expect(TranscriptionRecord(outcome: .nothing, durationSeconds: 1, tier: .ms560) == nil)
+        #expect(TranscriptionRecord(outcome: .nothing(why: .noSpeech), durationSeconds: 1, tier: .ms560)
+                == nil)
         #expect(
             TranscriptionRecord(
                 outcome: .failed(.noAudioCaptured), durationSeconds: 1, tier: .ms560) == nil)
@@ -220,6 +221,29 @@ struct TranscriptionHistoryTests {
         // Only the actionable one names the thing the user can do.
         #expect(denied.summary.contains("Accessibility"))
         #expect(!disabled.summary.contains("Accessibility"))
+    }
+
+    /// The clipping case is the one worth pinning: a hold that decodes to
+    /// nothing because the gain slider is too high used to be indistinguishable
+    /// from a hold into a dead microphone, which sends the user to the wrong
+    /// place entirely.
+    @MainActor
+    @Test("silence reasons are distinct, and only clipping names the gain")
+    func silenceReasonsAreDistinct() {
+        let short = SessionOutcome.nothing(why: .tooShort)
+        let quiet = SessionOutcome.nothing(why: .noSpeech)
+        let clipped = SessionOutcome.nothing(why: .clipping)
+
+        #expect(short != quiet)
+        #expect(quiet != clipped)
+        #expect(clipped == SessionOutcome.nothing(why: .clipping))
+
+        for outcome in [short, quiet, clipped] {
+            #expect(outcome.transcript == nil)
+            #expect(!outcome.isFailure, "no transcript is not the same as a failure")
+        }
+        #expect(clipped.summary.lowercased().contains("gain"))
+        #expect(!quiet.summary.lowercased().contains("gain"))
     }
 
     @MainActor

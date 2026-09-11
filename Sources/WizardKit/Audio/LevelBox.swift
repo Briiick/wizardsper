@@ -33,6 +33,9 @@ public final class LevelBox: @unchecked Sendable {
     /// the gaps between words.
     public let halfLife: Double
 
+    /// Fraction of the gap to a louder reading closed each frame.
+    private static let attackCoefficient: Float = 0.6
+
     public init(halfLife: Double = 0.12) {
         self.halfLife = max(0.001, halfLife)
     }
@@ -76,9 +79,19 @@ public final class LevelBox: @unchecked Sendable {
         let decayed = Float(bitPattern: envelope.load(ordering: .relaxed))
             * Float(exp2(-elapsed / halfLife))
 
-        // Instant attack, slow release: a transient must be visible on the very
-        // next frame, or the meter lags the voice noticeably.
-        let next = max(reading, decayed.isFinite ? decayed : 0)
+        // Fast attack, slow release — but not *instant* attack. Speech RMS
+        // swings a long way between one 43 ms buffer and the next, so jumping
+        // straight to every reading made the meter shimmer on the syllable rate
+        // rather than follow the voice. Rising 60% of the remaining distance per
+        // frame still shows a transient inside ~30 ms, which is faster than the
+        // eye resolves, while averaging out the buffer-to-buffer noise.
+        let floorValue = decayed.isFinite ? decayed : 0
+        let next: Float
+        if reading > floorValue {
+            next = floorValue + (reading - floorValue) * Self.attackCoefficient
+        } else {
+            next = floorValue
+        }
         envelope.store(next.bitPattern, ordering: .relaxed)
         return next
     }

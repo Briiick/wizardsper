@@ -73,6 +73,12 @@ public final class DictationCoordinator {
     /// dominant cost.
     private let feedFrames = 4096
 
+    /// Share of samples at the rails above which clipping, rather than silence,
+    /// is the better explanation for an empty transcript. Ordinary speech
+    /// touches full scale occasionally; 2% of every sample in a hold does not
+    /// happen without too much gain.
+    private static let clippingThreshold = 0.02
+
     public init(
         settings: Settings = .shared,
         history: TranscriptionHistory = .shared
@@ -212,7 +218,7 @@ public final class DictationCoordinator {
         // Clear the latch first: finalize() would otherwise read the chord as
         // still held and start the very session this call is cancelling.
         chordIsDown = false
-        finalize(.nothing, for: id)
+        finalize(.nothing(why: .noSpeech), for: id)
     }
 
     // MARK: - Session
@@ -374,11 +380,24 @@ public final class DictationCoordinator {
         // than silence.
         if held < settings.minimumHoldSeconds {
             Log.session.debug("Hold of \(held, format: .fixed(precision: 3)) s below threshold")
-            finalize(.nothing, for: id)
+            finalize(.nothing(why: .tooShort), for: id)
             return
         }
         guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            finalize(.nothing, for: id)
+            // An empty transcript after a real hold has two very different
+            // causes, and the user can only act on one of them. If the gain
+            // stage was pulling a meaningful share of samples to the rails, the
+            // recogniser heard a square wave rather than a voice, and no amount
+            // of speaking louder will help — so say that instead of blaming the
+            // microphone.
+            let clipped = capture.clippedFraction
+            if clipped > Self.clippingThreshold {
+                Log.audio.notice(
+                    "\(clipped * 100, format: .fixed(precision: 1))% of samples clipped; gain is too high")
+                finalize(.nothing(why: .clipping), for: id)
+            } else {
+                finalize(.nothing(why: .noSpeech), for: id)
+            }
             return
         }
 

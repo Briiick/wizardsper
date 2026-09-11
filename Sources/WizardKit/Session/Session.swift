@@ -44,6 +44,30 @@ public enum CopyReason: Sendable, Equatable {
     }
 }
 
+/// Why a session produced no transcript.
+///
+/// Same argument as `CopyReason`: the three look identical from outside — the
+/// pill says nothing was heard — but only one of them is the microphone, and one
+/// of them is a setting the user changed a minute ago and will not connect to
+/// the symptom on their own.
+public enum SilenceReason: Sendable, Equatable {
+    /// Held too briefly to be a deliberate hold.
+    case tooShort
+    /// Audio arrived and decoded to nothing.
+    case noSpeech
+    /// The gain stage was clipping, which decodes to nothing however loudly the
+    /// user spoke.
+    case clipping
+
+    public var explanation: String {
+        switch self {
+        case .tooShort: return "Too short"
+        case .noSpeech: return "Nothing heard"
+        case .clipping: return "Nothing heard — microphone gain is clipping"
+        }
+    }
+}
+
 /// The single terminal result of a session. Exactly one of these is published
 /// per session, and the flow bar does not dismiss until it sees one.
 public enum SessionOutcome: Sendable, Equatable {
@@ -51,8 +75,8 @@ public enum SessionOutcome: Sendable, Equatable {
     case pasted(String)
     /// Text is on the pasteboard, but nothing was typed into an app.
     case copied(String, why: CopyReason)
-    /// The session ended with nothing to show: no speech, or too short.
-    case nothing
+    /// The session ended with nothing to show.
+    case nothing(why: SilenceReason)
     case failed(WizardError)
 
     public var transcript: String? {
@@ -72,7 +96,7 @@ public enum SessionOutcome: Sendable, Equatable {
         switch self {
         case .pasted: return "Pasted"
         case .copied(_, let why): return why.explanation
-        case .nothing: return "Nothing heard"
+        case .nothing(let why): return why.explanation
         case .failed(let error): return error.errorDescription ?? "Failed"
         }
     }
@@ -81,7 +105,7 @@ public enum SessionOutcome: Sendable, Equatable {
         switch (lhs, rhs) {
         case (.pasted(let a), .pasted(let b)): return a == b
         case (.copied(let a, let x), .copied(let b, let y)): return a == b && x == y
-        case (.nothing, .nothing): return true
+        case (.nothing(let a), .nothing(let b)): return a == b
         case (.failed(let a), .failed(let b)):
             return a.errorDescription == b.errorDescription
         default: return false

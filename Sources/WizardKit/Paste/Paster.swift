@@ -68,7 +68,7 @@ public enum Paster {
         // pure loss. Bail before touching any shared state.
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             Log.paste.debug("Nothing to deliver: transcript is empty.")
-            return .nothing
+            return .nothing(why: .noSpeech)
         }
 
         let pasteboard = NSPasteboard.general
