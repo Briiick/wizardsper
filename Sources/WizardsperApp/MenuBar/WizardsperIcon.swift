@@ -43,9 +43,16 @@ enum WizardsperIcon {
     /// Built once each. The two images depend on nothing but the flag, and
     /// `refreshIcon()` asks for one on every state change — twice per dictation,
     /// in the same run-loop turn that is starting the audio engine.
-    private static let idle = render(listening: false)
-    private static let live = render(listening: true)
+    ///
+    /// Main-actor isolated because `NSImage` is not `Sendable`, and a bare
+    /// `static let` of one is shared mutable state as far as the compiler is
+    /// concerned. That is not pedantry here: the only caller is the status item,
+    /// which is main-actor by construction, so stating the isolation costs
+    /// nothing and is the truth.
+    @MainActor private static let idle = render(listening: false)
+    @MainActor private static let live = render(listening: true)
 
+    @MainActor
     static func image(listening: Bool) -> NSImage {
         listening ? live : idle
     }
