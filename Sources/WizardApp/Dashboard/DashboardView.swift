@@ -56,6 +56,10 @@ final class DashboardModel {
     var onStartLevelPreview: () -> Void = {}
     var onStopLevelPreview: () -> Void = {}
 
+    /// Why the last dictation was not rewritten, if it was not. Shown so a
+    /// feature that declined to act is distinguishable from one that is broken.
+    var lastCleanupNote: String?
+
     init() {}
 }
 
@@ -175,6 +179,8 @@ struct DashboardView: View {
             }
 
             InputGainSection(settings: settings, model: model)
+
+            CleanupSection(settings: settings, model: model)
 
             Section("After a hold") {
                 Toggle("Paste into the frontmost app", isOn: $settings.pasteAutomatically)

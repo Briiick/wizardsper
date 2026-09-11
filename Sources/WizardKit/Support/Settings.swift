@@ -28,6 +28,9 @@ public final class Settings {
     public var showFlowBar = true { didSet { persist() } }
     public var keepHistory = true { didSet { persist() } }
     public var historyRetentionDays = 7 { didSet { persist() } }
+    /// Rewrite finished transcripts with the on-device language model.
+    public var cleanup = CleanupPolicy.default { didSet { persist() } }
+
     /// Small certain corrections: finish the sentence, capitalise the start.
     public var polish = TranscriptPolish.default { didSet { persist() } }
 
@@ -62,6 +65,7 @@ public final class Settings {
         public var inputGain: Double
         public var vocabulary: Vocabulary
         public var polish: TranscriptPolish
+        public var cleanup: CleanupPolicy
     }
 
     public var snapshot: Snapshot {
@@ -71,7 +75,7 @@ public final class Settings {
             appendTrailingSpace: appendTrailingSpace,
             showFlowBar: showFlowBar, keepHistory: keepHistory,
             historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds,
-            inputGain: inputGain, vocabulary: vocabulary, polish: polish)
+            inputGain: inputGain, vocabulary: vocabulary, polish: polish, cleanup: cleanup)
     }
 
     public init(defaults: UserDefaults = .standard) {
@@ -95,6 +99,7 @@ public final class Settings {
         static let inputGain = "inputGain"
         static let vocabulary = "vocabulary"
         static let polish = "polish"
+        static let cleanup = "cleanup"
     }
 
     private func load() {
@@ -151,6 +156,11 @@ public final class Settings {
         {
             polish = value
         }
+        if let data = defaults.data(forKey: Key.cleanup),
+            let value = try? decoder.decode(CleanupPolicy.self, from: data)
+        {
+            cleanup = value
+        }
     }
 
     private func persist() {
@@ -170,6 +180,7 @@ public final class Settings {
         defaults.set(inputGain, forKey: Key.inputGain)
         defaults.set(try? encoder.encode(vocabulary), forKey: Key.vocabulary)
         defaults.set(try? encoder.encode(polish), forKey: Key.polish)
+        defaults.set(try? encoder.encode(cleanup), forKey: Key.cleanup)
     }
 }
 

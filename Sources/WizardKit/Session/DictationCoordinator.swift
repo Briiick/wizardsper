@@ -43,6 +43,15 @@ public final class DictationCoordinator {
     private let history: TranscriptionHistory
 
     private var asr: StreamingASR?
+    private let cleaner = TranscriptCleaner()
+
+    /// The transcript exactly as the recogniser produced it, before cleanup.
+    /// Kept so the rewrite is never the only copy of what the user said.
+    public private(set) var lastRawTranscript: String?
+    /// Why cleanup left the transcript alone, when it did. Surfaced rather than
+    /// swallowed: a feature that silently does nothing is indistinguishable from
+    /// one that is broken.
+    public private(set) var lastCleanupNote: String?
 
     // MARK: - Session state
 
@@ -270,6 +279,13 @@ public final class DictationCoordinator {
         drain = Task { [weak self] in
             await self?.pump(id, asr: asr)
         }
+        if settings.cleanup.enabled {
+            // Loading the language model takes far longer than generating with
+            // it. Starting that at key-down spends the whole hold on it, so the
+            // rewrite at the end is only the generation.
+            let cleaner = self.cleaner
+            Task.detached { await cleaner.prewarm() }
+        }
         Log.session.info("Session \(id.description, privacy: .public) listening")
     }
 
@@ -431,9 +447,31 @@ public final class DictationCoordinator {
             return
         }
 
-        snapshot.transcript = transcript
+        lastRawTranscript = transcript
+        lastCleanupNote = nil
+
+        // Cleanup runs here and only here: on the finished transcript, never on
+        // partials. A language model revises words it has already emitted, and
+        // the flow bar identifies words by index precisely because the
+        // recogniser never does.
+        var delivered = transcript
+        let policy = settings.cleanup
+        if policy.allows(bundleID: CleanupPolicy.frontmostBundleID()) {
+            snapshot.transcript = transcript
+            let result = await cleaner.clean(transcript, deadline: policy.deadline)
+            guard sessionID == id else { return }
+            delivered = result.text
+            lastCleanupNote = result.note
+            if let note = result.note {
+                Log.session.notice("Cleanup kept the raw transcript: \(note, privacy: .public)")
+            }
+        } else if policy.enabled {
+            lastCleanupNote = "Not cleaned up here — this app takes text verbatim"
+        }
+
+        snapshot.transcript = delivered
         let outcome = await Paster.deliver(
-            transcript,
+            delivered,
             restorePasteboard: settings.restorePasteboard,
             autoPaste: settings.pasteAutomatically,
             trailingSpace: settings.appendTrailingSpace)

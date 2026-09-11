@@ -175,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.onOutcome = { [weak self] outcome in
             guard let self else { return }
             self.flowModel.finish(outcome)
+            self.dashboardModel.lastCleanupNote = self.coordinator.lastCleanupNote
             if let text = outcome.transcript { self.status.lastTranscript = text }
 
             // A transcript that could not be pasted is the one outcome the user
