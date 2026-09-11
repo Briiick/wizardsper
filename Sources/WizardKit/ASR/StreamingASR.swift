@@ -133,6 +133,13 @@ public actor StreamingASR {
         self.audioInput = try MLArrayReader.float32(shape: [1, windowSamples])
         self.audioLengthInput = try MLArrayReader.int32(shape: [1], value: Int32(windowSamples))
         self.melInput = try MLArrayReader.float32(shape: config.encoderMelShape)
+        // Always the full frame budget, including on the zero-extended final
+        // chunk where the preprocessor has masked some of those frames to zero.
+        // That is deliberate: the encoder's `encoded` output is a fixed shape, so
+        // a shorter `mel_length` would not shorten it, and the masked frames are
+        // exact silence — which the RNN-T decodes to blanks and emits nothing
+        // for. Telling the encoder the truth about a shorter tail would instead
+        // desynchronise its cache advance from the mel grid every session.
         self.melLengthInput = try MLArrayReader.int32(
             shape: [1], value: Int32(config.totalMelFrames))
         self.encoderStepInput = try MLArrayReader.float32(shape: [1, config.encoderDim, 1])
