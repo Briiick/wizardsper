@@ -384,7 +384,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         observe { [weak self] in self?.settings.tier ?? .default } onChange: { [weak self] tier in
-            guard let self, tier != self.coordinator.activeTier else { return }
+            guard let self else { return }
+            // `!isReady` is part of the condition, not redundant: `prepare()`
+            // records the tier it is attempting before it tries, so a failed
+            // load leaves `activeTier` already equal to the selection. Without
+            // this, picking the same tier again — the obvious way to retry after
+            // a download failure — would be swallowed as "no change".
+            guard tier != self.coordinator.activeTier || !self.coordinator.isReady else { return }
             self.loadModel(tier)
         }
         observe { [weak self] in self?.settings.historyRetentionDays ?? 7 } onChange: {

@@ -76,6 +76,18 @@ that key is the runtime's Audio Input capability, not only a sandbox key.
 `AVCaptureDevice.requestAccess` returns `false` within milliseconds and no prompt
 is ever shown, which is indistinguishable from the user denying one.
 
+## Verifying a change
+
+```bash
+./Scripts/verify.sh
+```
+
+Builds the library, the CLI and the app bundle, runs the tests, transcribes a
+file with a known transcript, and exercises the live capture path against a real
+microphone. The last one matters more than it looks: the render-thread tap block
+is the single easiest place in this codebase to introduce a crash that compiles
+cleanly and passes every unit test.
+
 ## The CLI harness
 
 The recognition path is developed and checked against files before any
