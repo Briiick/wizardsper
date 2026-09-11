@@ -25,6 +25,12 @@ final class DashboardModel {
     /// bar and which buttons are offered.
     var progress: Double?
 
+    /// Every tier currently present and complete on disk. Per-tier rather than a
+    /// single flag, so the picker can say which choices are free and which are a
+    /// 615 MB download before the user commits to one.
+    var installedTiers: Set<NemotronTier> = []
+
+    /// Whether the *active* tier is installed.
     var isInstalled = false
 
     /// Bytes the active tier occupies, or `nil` when it is not installed.
@@ -293,16 +299,32 @@ struct DashboardView: View {
                     .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tier.displayName)
-                    Text("Reported WER \(tier.reportedWER)")
+                    Text(tierSubtitle(tier))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
+                if !model.installedTiers.contains(tier) {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(.secondary)
+                        .help("Choosing this tier downloads it first.")
+                }
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+
+    /// Says what picking this tier will actually cost. A bare WER number invites
+    /// the user to switch to "the accurate one" without being told that doing so
+    /// starts a 615 MB download.
+    private func tierSubtitle(_ tier: NemotronTier) -> String {
+        let size = ByteCountFormatter.string(
+            fromByteCount: tier.approximateBytes, countStyle: .file)
+        return model.installedTiers.contains(tier)
+            ? "Installed · publisher reports \(tier.publishedWER)"
+            : "Downloads \(size) · publisher reports \(tier.publishedWER)"
     }
 
     // MARK: - Launch at login
@@ -408,7 +430,7 @@ struct DashboardView: View {
 
             HStack(spacing: 18) {
                 fact("Chunk", "\(settings.tier.chunkMilliseconds) ms")
-                fact("Reported WER", settings.tier.reportedWER)
+                fact("Publisher's WER", settings.tier.publishedWER)
                 fact("On disk", sizeText)
             }
 
@@ -523,6 +545,7 @@ extension DashboardModel {
     fileprivate static func previewModel() -> DashboardModel {
         let model = DashboardModel()
         model.isInstalled = true
+        model.installedTiers = [.ms560]
         model.phaseText = "Installed and verified."
         model.sizeOnDisk = 628_144_000
         return model

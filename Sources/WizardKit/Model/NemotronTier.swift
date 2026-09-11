@@ -26,15 +26,24 @@ public enum NemotronTier: Int, CaseIterable, Sendable, Codable, Identifiable {
         }
     }
 
-    /// Publisher-reported word error rate on LibriSpeech test-clean.
-    public var reportedWER: String {
+    /// The *publisher's* word error rate on LibriSpeech test-clean, quoted as
+    /// published. Named for its provenance because it is not a measurement of
+    /// this app: the 160 ms figure in particular came from only 20 files, and
+    /// Wizard's own front-end measures it as very close to the 560 ms tier
+    /// (5.39% against 5.22% over 73 utterances of dev-clean). Do not present
+    /// these as what a user should expect.
+    public var publishedWER: String {
         switch self {
-        case .ms160: return "~10%"
+        case .ms160: return "~10% (20 files)"
         case .ms560: return "2.12%"
         case .ms1120: return "1.99%"
         case .ms2240: return "2.46%"
         }
     }
+
+    /// Roughly how much disk a tier occupies, for a UI that is about to ask the
+    /// user to commit to a download this size.
+    public var approximateBytes: Int64 { 615_000_000 }
 
     public var subdirectory: String { "nemotron_coreml_\(rawValue)ms" }
 
@@ -69,5 +78,4 @@ public enum NemotronTier: Int, CaseIterable, Sendable, Codable, Identifiable {
         ]
     }
 
-    public var approximateDownloadBytes: Int64 { 630_000_000 }
 }

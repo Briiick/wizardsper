@@ -318,8 +318,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshModelStatus() {
         let tier = settings.tier
         Task { @MainActor in
-            let installed = await ModelInstaller.shared.isInstalled(tier)
-            self.dashboardModel.isInstalled = installed
+            var present: Set<NemotronTier> = []
+            for candidate in NemotronTier.allCases
+            where await ModelInstaller.shared.isInstalled(candidate) {
+                present.insert(candidate)
+            }
+            self.dashboardModel.installedTiers = present
+            self.dashboardModel.isInstalled = present.contains(tier)
             self.dashboardModel.sizeOnDisk = Self.directorySize(
                 WizardPaths.modelDirectory(for: tier))
         }

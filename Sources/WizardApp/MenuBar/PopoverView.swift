@@ -85,7 +85,7 @@ struct PopoverView: View {
                 Text(status.activeTier.displayName)
                     .font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 8)
-                Text("WER \(status.activeTier.reportedWER)")
+                Text("Publisher's WER \(status.activeTier.publishedWER)")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
