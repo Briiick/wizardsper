@@ -49,6 +49,8 @@ targets:
     platform: macOS
     sources:
       - path: Sources/WizardApp
+      - path: Resources/Wizard.icns
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bricken.wizard
