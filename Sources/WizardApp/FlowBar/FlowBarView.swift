@@ -94,9 +94,15 @@ struct FlowBarView: View {
         // the transcript scrolls inside it.
         .frame(width: FlowBarMetrics.pillWidth, height: nil)
         .frame(minHeight: FlowBarMetrics.pillMinHeight)
-        // Material rather than a colour, so the pill reads as macOS chrome in
-        // both appearances without naming a single light or dark value.
-        .background(shape.fill(.ultraThinMaterial))
+        // `background(_:in:)`, not `background { shape.fill(material) }`.
+        //
+        // They look like the same thing and are not. This form renders the
+        // material as a true backdrop, sampling and blurring what is behind the
+        // window; filling a shape with it treats the material as an ordinary
+        // fill style, which loses the vibrancy and comes out flat grey. The pill
+        // went visibly lifeless when this was a fill, and nothing else about it
+        // had changed.
+        .background(.ultraThinMaterial, in: shape)
         .overlay { shape.strokeBorder(borderStyle, lineWidth: 1) }
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: model.outcome)
         .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: transcriptHeight)

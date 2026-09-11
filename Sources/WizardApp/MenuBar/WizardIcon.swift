@@ -9,9 +9,9 @@ import AppKit
 /// unrelated symbols — which is what `waveform` and `waveform.badge.mic` were —
 /// makes the user re-identify the glyph every time the state flips.
 ///
-/// The mark is a four-point sparkle. Idle, that is all it is. While Wizard is
-/// listening the sparkle draws in slightly and two arcs open out around it, so
-/// the glyph appears to be emitting something.
+/// The mark is a four-point sparkle held between arcs: one pair at rest, two
+/// while Wizard is listening, so recording *adds* a ring rather than altering
+/// one.
 ///
 /// The states differ *topologically* — one shape against three — rather than by
 /// degree. An earlier version changed only the arcs' sweep and radius between
@@ -21,9 +21,12 @@ import AppKit
 /// to survive being two pixels tall, and "is there an arc at all" survives where
 /// "is this arc slightly longer" does not.
 ///
-/// It also makes the resting state much lighter, which matters: Apple's own menu
-/// bar glyphs are visually sparse, and a mark that is inked solid at rest sits in
-/// the menu bar like a smudge.
+/// The tight constraint is the second ring. An 18pt box leaves about 8pt of
+/// radius once the outer stroke is accounted for, so the inner pair and the
+/// sparkle share what is left. The sparkle narrows rather than shortens when the
+/// inner arcs appear: the arcs sweep about the horizontal axis, so they crowd
+/// its width while leaving its height clear, which is why the vertical tips
+/// still show through the gaps at top and bottom.
 ///
 /// Every number below is in an 18x18 unit box and was chosen by rendering at
 /// the real 18pt size, not by eye at a comfortable one. The things that would
@@ -66,8 +69,8 @@ enum WizardIcon {
     /// mark inside the box once there is something around it, and the change in
     /// the sparkle reinforces the change in the arcs, so the states differ in
     /// two ways at once rather than one.
-    private static let idleSparkle = CGSize(width: 4.4, height: 6.3)
-    private static let liveSparkle = CGSize(width: 3.4, height: 4.9)
+    private static let idleSparkle = CGSize(width: 3.4, height: 4.9)
+    private static let liveSparkle = CGSize(width: 2.3, height: 4.6)
 
     /// How far the sparkle's arms pinch in, as a fraction of their length.
     /// Lower is a thinner, more elegant star — but below about 0.1 the arms
@@ -77,11 +80,18 @@ enum WizardIcon {
     /// 2pt survives at 18pt on a 1x display; 1pt does not.
     private static let arcWidth: CGFloat = 2
 
-    /// Listening only. The radius is capped so the stroke's outer edge stays
-    /// inside the 18pt box, and the sweep is wide enough that each arc is
-    /// several pixels long at 18pt rather than a dot.
+    /// The outer pair, present in both states. The radius is capped so the
+    /// stroke's outer edge stays inside the 18pt box, and the sweep is wide
+    /// enough that each arc is several pixels long at 18pt rather than a dot.
     private static let arcRadius: CGFloat = 7
     private static let arcSweep: CGFloat = 52
+
+    /// The inner pair, listening only. Thinner and shorter than the outer one so
+    /// the two read as a sequence radiating outwards; at this size two strokes
+    /// of equal weight sitting 2pt apart merge into a single thick band.
+    private static let innerArcRadius: CGFloat = 4.3
+    private static let innerArcWidth: CGFloat = 1.6
+    private static let innerArcSweep: CGFloat = 44
 
     private static func draw(listening: Bool, in rect: NSRect) {
         guard let context = NSGraphicsContext.current else { return }
@@ -95,9 +105,16 @@ enum WizardIcon {
 
         sparkle(size: listening ? liveSparkle : idleSparkle).fill()
 
+        arc(radius: arcRadius, width: arcWidth, from: -arcSweep, to: arcSweep).stroke()
+        arc(radius: arcRadius, width: arcWidth, from: 180 - arcSweep, to: 180 + arcSweep).stroke()
+
         guard listening else { return }
-        arc(from: -arcSweep, to: arcSweep).stroke()
-        arc(from: 180 - arcSweep, to: 180 + arcSweep).stroke()
+        arc(radius: innerArcRadius, width: innerArcWidth, from: -innerArcSweep, to: innerArcSweep)
+            .stroke()
+        arc(
+            radius: innerArcRadius, width: innerArcWidth, from: 180 - innerArcSweep,
+            to: 180 + innerArcSweep
+        ).stroke()
     }
 
     /// A four-point star: tips on the axes, each pair joined by a curve whose
@@ -131,10 +148,12 @@ enum WizardIcon {
         return path
     }
 
-    private static func arc(from start: CGFloat, to end: CGFloat) -> NSBezierPath {
+    private static func arc(
+        radius: CGFloat, width: CGFloat, from start: CGFloat, to end: CGFloat
+    ) -> NSBezierPath {
         let path = NSBezierPath()
-        path.appendArc(withCenter: centre, radius: arcRadius, startAngle: start, endAngle: end)
-        path.lineWidth = arcWidth
+        path.appendArc(withCenter: centre, radius: radius, startAngle: start, endAngle: end)
+        path.lineWidth = width
         // Round caps, so the arcs read as soft strokes rather than cut tubes —
         // and so the two ends stay visible once the sweep shortens in idle.
         path.lineCapStyle = .round

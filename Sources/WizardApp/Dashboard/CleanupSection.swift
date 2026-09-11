@@ -41,6 +41,13 @@ struct CleanupSection: View {
             }
 
             if settings.cleanup.enabled {
+                Toggle(
+                    "Always finish the rewrite", isOn: $settings.cleanup.waitsForCompletion
+                )
+                .help(
+                    "One pass, run to completion, after you release the key. The same dictation always produces the same result — but the paste waits for it."
+                )
+
                 LabeledContent("Give up after") {
                     Slider(value: $settings.cleanup.deadlineSeconds, in: 0.5...4, step: 0.25) {
                         Text("Give up after")
@@ -50,6 +57,7 @@ struct CleanupSection: View {
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
+                .disabled(settings.cleanup.waitsForCompletion)
 
                 if let note = model.lastCleanupNote {
                     Label(note, systemImage: "info.circle")
@@ -61,7 +69,7 @@ struct CleanupSection: View {
             Text("Clean-up")
         } footer: {
             Text(
-                "Runs Apple's on-device model over the finished transcript to remove fillers and false starts and fix grammar. Nothing leaves your Mac. It rewrites what you said, so it is checked against the original and discarded if it strays, answers you, or finishes a sentence you did not — and it never runs in Terminal, Xcode or a code editor, where text has to be verbatim."
+                "One pass over the finished transcript, using Apple's on-device model, after you release the key. Nothing leaves your Mac, and sampling is greedy, so the same words always produce the same result. It rewrites what you said, so it is checked against the original and discarded if it strays, answers you, or finishes a sentence you did not — and it never runs in Terminal, Xcode or a code editor, where text has to be verbatim."
             )
         }
         .task {

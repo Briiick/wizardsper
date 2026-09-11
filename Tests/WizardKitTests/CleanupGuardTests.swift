@@ -241,3 +241,42 @@ struct TranscriptCleanerTests {
         #expect(!outcome.changed)
     }
 }
+
+@Suite("Deterministic pass")
+struct CleanupDeterminismTests {
+
+    /// With a deadline, whether the transcript gets cleaned depends on how busy
+    /// the machine was — the same sentence comes back polished once and raw the
+    /// next time. This switch is what removes wall-clock time from the result.
+    @Test("waiting for completion ignores the deadline slider")
+    func waitingOverridesTheDeadline() {
+        var policy = CleanupPolicy.default
+        policy.deadlineSeconds = 0.5
+        #expect(policy.deadline == .milliseconds(500))
+
+        policy.waitsForCompletion = true
+        #expect(policy.deadline == CleanupPolicy.safetyCeiling)
+        // Still bounded: "wait forever" is not a behaviour a paste can have.
+        #expect(CleanupPolicy.safetyCeiling < .seconds(120))
+    }
+
+    /// A policy written by an earlier build has no `waitsForCompletion` key.
+    /// Decoding must fill it in rather than fail, or upgrading would silently
+    /// reset every other cleanup setting the user had chosen.
+    @Test("a policy stored before this option still decodes")
+    func decodesOlderPolicies() throws {
+        let old = #"{"enabled":true,"deadlineSeconds":2.5,"excludedBundleIDs":["com.apple.Terminal"]}"#
+        let policy = try JSONDecoder().decode(CleanupPolicy.self, from: Data(old.utf8))
+        #expect(policy.enabled)
+        #expect(policy.deadlineSeconds == 2.5)
+        #expect(!policy.waitsForCompletion)
+        #expect(policy.excludedBundleIDs == ["com.apple.Terminal"])
+    }
+
+    @Test("an empty object decodes to the safe defaults")
+    func decodesEmptyObject() throws {
+        let policy = try JSONDecoder().decode(CleanupPolicy.self, from: Data("{}".utf8))
+        #expect(policy == CleanupPolicy.default)
+        #expect(!policy.enabled)
+    }
+}
