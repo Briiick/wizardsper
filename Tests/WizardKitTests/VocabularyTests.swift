@@ -192,3 +192,84 @@ struct VocabularyTests {
         #expect(try JSONDecoder().decode(Vocabulary.self, from: data) == v)
     }
 }
+
+@Suite("Polish")
+struct TranscriptPolishTests {
+
+    private let polish = TranscriptPolish.default
+
+    /// The actual complaint: every real dictation ended on a letter. These are
+    /// verbatim from the app's own history.
+    @Test(
+        "a statement gets a full stop",
+        arguments: [
+            "Hey, this is working", "There, can you hear me",
+            "Been all the way range. Yeah, actually it's funny because the I thought that",
+        ])
+    func finishesStatements(text: String) {
+        #expect(polish.apply(to: text).hasSuffix("."))
+    }
+
+    /// The model does emit "?" mid-utterance, so it knows questions — it just
+    /// never terminates the last one.
+    @Test(
+        "a question gets a question mark",
+        arguments: [
+            "Can you hear me", "What is the shower situation", "Is this working",
+            "Do you think there's a way to make it work",
+        ])
+    func finishesQuestions(text: String) {
+        #expect(polish.apply(to: text).hasSuffix("?"))
+    }
+
+    /// Only the final clause decides, because the transcript may hold several
+    /// sentences and only the last one is unterminated.
+    @Test("the mark is chosen from the last clause, not the first")
+    func usesFinalClause() {
+        #expect(polish.apply(to: "What a day. I went home").hasSuffix("home."))
+        #expect(polish.apply(to: "I went home. Did you").hasSuffix("you?"))
+    }
+
+    @Test("nothing is appended to text that already ends in punctuation")
+    func leavesTerminatedTextAlone() {
+        for text in ["Done.", "Really?", "Stop!", "Wait —", "One, two,"] {
+            #expect(polish.apply(to: text) == text, "changed: \(text)")
+        }
+    }
+
+    @Test("the first letter is capitalised")
+    func capitalisesStart() {
+        #expect(polish.apply(to: "hello there") == "Hello there.")
+        #expect(polish.apply(to: "Already capital") == "Already capital.")
+    }
+
+    /// "IPhone" is worse than a missing capital, and the recogniser gets these
+    /// right on its own — the only way to break them is to "fix" them.
+    @Test(
+        "a deliberately lowercase first word is left alone",
+        arguments: ["iPhone battery is low", "iOS updates tonight", "eBay listing went up",
+                    "macOS 26 shipped"])
+    func doesNotBreakCamelCase(text: String) {
+        let result = polish.apply(to: text)
+        #expect(result.hasPrefix(String(text.prefix(while: { !$0.isWhitespace }))), "mangled: \(result)")
+    }
+
+    @Test("empty and whitespace-only text is returned untouched")
+    func handlesEmpty() {
+        #expect(polish.apply(to: "") == "")
+        #expect(polish.apply(to: "   ") == "   ")
+    }
+
+    @Test("polish is idempotent")
+    func isIdempotent() {
+        for text in ["hello there", "can you hear me", "Done.", ""] {
+            let once = polish.apply(to: text)
+            #expect(polish.apply(to: once) == once, "not idempotent: \(text)")
+        }
+    }
+
+    @Test("both rules can be switched off")
+    func canBeDisabled() {
+        #expect(TranscriptPolish.none.apply(to: "hello there") == "hello there")
+    }
+}

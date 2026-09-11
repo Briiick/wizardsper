@@ -1,53 +1,58 @@
 import SwiftUI
 
-/// The live transcript: one line, laid out left to right, each word fading in
-/// where it belongs, in a box that is only as wide as it needs to be.
+/// The live transcript: words laid out left to right, wrapping onto new lines,
+/// each fading in where it belongs.
 ///
-/// Three things this has to get right, and each of them was wrong at some point:
+/// Three things this has to get right, and each was wrong at some point:
 ///
 /// **Words must not slide.** A word that moves into place draws the eye to the
 /// movement rather than to the word, and with a partial arriving every few
 /// hundred milliseconds that becomes the most distracting thing on screen. New
-/// words fade in; words already on screen do not move.
+/// words fade in; words already placed do not move.
 ///
-/// **The line must not escape its box.** The obvious construction — an `HStack`
-/// holding a `fixedSize()` row, with `.frame(maxWidth: .infinity)` and
-/// `.clipped()` — fails silently: the stack *grows to fit* its oversized child,
-/// so any width measured off it is the content's width, the scroll offset
-/// computes to zero, and the clip is applied to a frame already wider than the
-/// pill. Long sentences then draw straight out through the capsule. The width
-/// here is therefore derived from the measured content and an explicit maximum,
-/// never from a container that is free to grow.
+/// **The text must not escape its box.** The obvious construction — a stack of
+/// `fixedSize()` words with `.frame(maxWidth: .infinity)` and `.clipped()` —
+/// fails silently: the stack *grows to fit* its oversized child, so any width
+/// measured off it is the content's width, the offset computes to zero, and the
+/// clip applies to a frame already wider than the pill. Long sentences then draw
+/// straight out through the capsule. Widths here come from `Layout`, which is
+/// told the real proposal, never from a container free to grow.
 ///
-/// **Overflow must look deliberate.** Once the line is longer than the box it
-/// has to scroll, and a hard clip slices glyphs down the middle at both ends.
-/// The edges are masked with a short gradient instead, so text dissolves into
-/// the capsule rather than hitting a wall — and only on the side that is
-/// actually overflowing.
+/// **It has to hold a long thought.** A single line is fine for "yes" and
+/// useless for twenty seconds of speech, which is what people actually dictate.
+/// The box grows downwards a line at a time up to `maxLines`, and past that it
+/// scrolls so the newest line stays visible — the one thing a live meter has to
+/// do.
 struct TranscriptFlowView: View {
 
     let text: String
     var color: Color = .primary
     var font: Font = .system(size: 13.5, weight: .medium, design: .rounded)
-    /// The widest the line may become. Past this it scrolls.
+    /// The widest the text may become. Past this it wraps.
     var maxWidth: CGFloat = 420
-    /// Keeps the pill from collapsing to nothing on "Hi" and snapping wider on
-    /// the next word.
+    /// Keeps the pill from collapsing on "Hi" and snapping wider on the next word.
     var minWidth: CGFloat = 120
+    /// How tall the box may grow before it starts scrolling instead.
+    var maxLines: Int = 5
     /// Placeholders ("Listening…") and outcome summaries are one thing being
     /// said, not speech accumulating, so they cross-fade whole.
     var flowsWordByWord: Bool = true
     var reduceMotion: Bool = false
+    /// Reports the laid-out height so the pill can grow with it.
+    var onHeightChange: (CGFloat) -> Void = { _ in }
 
     @State private var contentWidth: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
 
+    private static let lineHeight: CGFloat = 18
+    private static let lineSpacing: CGFloat = 3
+    private static let wordSpacing: CGFloat = 4
     /// Length of the dissolve at an overflowing edge.
-    private static let fade: CGFloat = 18
-    private static let lineHeight: CGFloat = 20
+    private static let fade: CGFloat = 14
 
-    /// Index is a stable identity here because greedy RNN-T only ever appends:
-    /// an emitted token is never revised, so word *n* stays word *n*. The final
-    /// word grows in place as more sub-word pieces arrive, which SwiftUI updates
+    /// Index is a stable identity because greedy RNN-T only ever appends: an
+    /// emitted token is never revised, so word *n* stays word *n*. The final word
+    /// grows in place as more sub-word pieces arrive, which SwiftUI updates
     /// without a transition — correct, since completing a word is not the same
     /// as starting one.
     private var words: [Word] {
@@ -61,32 +66,37 @@ struct TranscriptFlowView: View {
         let text: String
     }
 
-    private struct WidthKey: PreferenceKey {
-        static let defaultValue: CGFloat = 0
-        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-            value = max(value, nextValue())
+    private struct SizeKey: PreferenceKey {
+        static let defaultValue = CGSize.zero
+        static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+            let next = nextValue()
+            value = CGSize(width: max(value.width, next.width), height: max(value.height, next.height))
         }
     }
 
-    /// What the box actually measures: the content, clamped both ways.
-    private var boxWidth: CGFloat {
-        min(max(contentWidth, minWidth), maxWidth)
+    /// Room for `maxLines` before scrolling begins.
+    private var maxHeight: CGFloat {
+        CGFloat(maxLines) * Self.lineHeight + CGFloat(maxLines - 1) * Self.lineSpacing
     }
 
-    /// Zero until the line fills the box; after that, exactly the amount that
-    /// has run off the end.
-    private var offset: CGFloat {
-        min(0, boxWidth - contentWidth)
+    /// The box: as wide as it needs up to `maxWidth`, as tall as it needs up to
+    /// `maxLines`.
+    private var boxWidth: CGFloat { min(max(contentWidth, minWidth), maxWidth) }
+    private var boxHeight: CGFloat {
+        min(max(contentHeight, Self.lineHeight), maxHeight)
     }
 
-    private var overflowsLeading: Bool { offset < -0.5 }
-    private var overflowsTrailing: Bool { contentWidth > boxWidth + 0.5 }
+    /// Zero until the text is taller than the box; after that, exactly the
+    /// amount that has scrolled off the top.
+    private var scroll: CGFloat { min(0, boxHeight - contentHeight) }
 
     var body: some View {
         content
-            .frame(width: boxWidth, height: Self.lineHeight, alignment: .leading)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: boxWidth)
+            .frame(width: boxWidth, height: boxHeight, alignment: .topLeading)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: boxWidth)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: boxHeight)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: text)
+            .onChange(of: boxHeight, initial: true) { _, height in onHeightChange(height) }
     }
 
     @ViewBuilder
@@ -105,48 +115,51 @@ struct TranscriptFlowView: View {
     }
 
     private var flowing: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
+        WordFlowLayout(spacing: Self.wordSpacing, lineSpacing: Self.lineSpacing) {
             ForEach(words) { word in
                 Text(word.text)
                     .font(font)
                     .foregroundStyle(color)
                     .fixedSize()
+                    // Opacity only, for the reason in the type comment.
                     .transition(reduceMotion ? .identity : .opacity)
             }
         }
-        .fixedSize()
+        // The layout is told the real width to break lines against; measuring it
+        // afterwards would be measuring the answer, not the question.
+        .frame(width: boxWidth, alignment: .topLeading)
         .background(
             GeometryReader { proxy in
-                Color.clear.preference(key: WidthKey.self, value: proxy.size.width)
+                Color.clear.preference(key: SizeKey.self, value: proxy.size)
             }
         )
-        .offset(x: offset)
+        .offset(y: scroll)
         // The hard clamp. `offset` moves pixels without changing layout, so the
-        // frame has to be pinned explicitly before the mask has anything correct
-        // to mask.
-        .frame(width: boxWidth, height: Self.lineHeight, alignment: .leading)
-        .mask(edgeMask)
-        .onPreferenceChange(WidthKey.self) { width in
-            contentWidth = width
+        // frame has to be pinned before the mask has anything correct to mask.
+        .frame(width: boxWidth, height: boxHeight, alignment: .topLeading)
+        .mask(topFade)
+        .onPreferenceChange(SizeKey.self) { size in
+            // Width is measured from the *unwrapped* natural size on the first
+            // pass, so it is taken only while the text still fits on one line;
+            // after that the box is at `maxWidth` and the height is what moves.
+            contentHeight = size.height
+            if contentWidth < maxWidth { contentWidth = max(contentWidth, size.width) }
         }
         .accessibilityHidden(true)
     }
 
-    /// Opaque across the middle, dissolving only at an edge that is actually
-    /// cut. Fading an edge with nothing beyond it would make a short line look
-    /// like it was trailing off when it had simply finished.
-    private var edgeMask: some View {
-        let leadingFade = overflowsLeading ? Self.fade : 0
-        let trailingFade = overflowsTrailing ? Self.fade : 0
-        let total = max(boxWidth, 1)
+    /// Dissolve the top edge once lines have scrolled off it, so the oldest line
+    /// fades into the capsule instead of being sliced through the middle.
+    private var topFade: some View {
+        let fading = scroll < -0.5
+        let total = max(boxHeight, 1)
         return LinearGradient(
             stops: [
-                .init(color: .black.opacity(leadingFade > 0 ? 0 : 1), location: 0),
-                .init(color: .black, location: leadingFade / total),
-                .init(color: .black, location: 1 - trailingFade / total),
-                .init(color: .black.opacity(trailingFade > 0 ? 0 : 1), location: 1),
+                .init(color: .black.opacity(fading ? 0 : 1), location: 0),
+                .init(color: .black, location: fading ? Self.fade / total : 0),
+                .init(color: .black, location: 1),
             ],
-            startPoint: .leading, endPoint: .trailing)
+            startPoint: .top, endPoint: .bottom)
     }
 }
 
@@ -156,7 +169,9 @@ struct TranscriptFlowView: View {
         TranscriptFlowView(text: "Hello")
         TranscriptFlowView(text: "Hello, can you hear me now")
         TranscriptFlowView(
-            text: "But like he was gonna no, we always took our dude wives with us because that")
+            text:
+                "Because also it keeps so if I oh yeah oh maybe I would buy it from you yeah let me know but so the answer your question"
+        )
         TranscriptFlowView(text: "Listening…", color: .secondary, flowsWordByWord: false)
     }
     .padding(24)

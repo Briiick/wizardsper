@@ -16,7 +16,8 @@ import SwiftUI
 
 private let frameWidth: CGFloat = 300
 private let canvasWidth: CGFloat = 520
-private let canvasHeight: CGFloat = 40
+private let canvasHeight: CGFloat = 220
+private let maxLines = 5
 
 private struct Case {
     let name: String
@@ -45,7 +46,7 @@ private func overflow(for testCase: Case) -> (rightmostPoints: Double, overflowP
         // its width keeps the ink inside.
         TranscriptFlowView(
             text: testCase.text, color: .black,
-            maxWidth: frameWidth, minWidth: frameWidth)
+            maxWidth: frameWidth, minWidth: frameWidth, maxLines: maxLines)
             .padding(.top, 10)
     }
     .frame(width: canvasWidth, height: canvasHeight)

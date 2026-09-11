@@ -23,13 +23,25 @@ enum FlowBarMetrics {
         pillMinWidth - horizontalPadding * 2 - LevelBarsView.clusterWidth - contentSpacing
     }
     static let horizontalPadding: CGFloat = 18
+    static let verticalPadding: CGFloat = 13
+    /// Height of a single line of transcript, for deciding capsule vs rectangle.
+    static let singleLineHeight: CGFloat = 18
     static let contentSpacing: CGFloat = 12
-    static let pillHeight: CGFloat = 44
+    /// One line of transcript. The pill grows from here, a line at a time.
+    static let pillMinHeight: CGFloat = 44
+    /// Five lines. Past this the transcript scrolls inside the pill rather than
+    /// the pill continuing to grow: a panel that kept expanding would eventually
+    /// cover the thing the user is dictating into.
+    static let pillMaxHeight: CGFloat = 44 + 4 * 21
+    static let maxLines = 5
     /// Transparent margin around the pill inside the window. The window clips
     /// its content, so the shadow and the fade need somewhere to live.
     static let margin: CGFloat = 14
     static var panelWidth: CGFloat { pillMaxWidth + margin * 2 }
-    static var panelHeight: CGFloat { pillHeight + margin * 2 }
+    /// Sized for the tallest the pill can get. The window cannot resize while
+    /// it is on screen without the compositor flickering, so it is allocated at
+    /// maximum and the pill grows inside it.
+    static var panelHeight: CGFloat { pillMaxHeight + margin * 2 }
     /// Gap between the bottom of the window and the top of the Dock.
     static let bottomInset: CGFloat = 8
 
@@ -56,37 +68,55 @@ struct FlowBarView: View {
     let model: FlowBarModel
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var transcriptHeight: CGFloat = 0
+
+    /// A capsule while it is one line; a rounded rectangle once it wraps. A
+    /// capsule several lines tall has semicircular ends taller than the text and
+    /// reads as a lozenge rather than as a panel.
+    private var shape: AnyInsettableShape {
+        transcriptHeight > FlowBarMetrics.singleLineHeight + 1
+            ? AnyInsettableShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            : AnyInsettableShape(Capsule(style: .continuous))
+    }
 
     var body: some View {
-        HStack(spacing: FlowBarMetrics.contentSpacing) {
+        HStack(alignment: .top, spacing: FlowBarMetrics.contentSpacing) {
             leading
-            // One line always: the pill is a glance, not a document, and a
-            // second line would change its height mid-sentence.
+                // Pinned to the first line rather than centred: with a
+                // multi-line transcript a vertically centred meter drifts down
+                // the pill as the text grows, which reads as the meter moving
+                // rather than the text arriving.
+                .padding(.top, 1)
             TranscriptFlowView(
                 text: displayText,
                 color: textColor,
                 maxWidth: FlowBarMetrics.transcriptMaxWidth,
                 minWidth: FlowBarMetrics.transcriptMinWidth,
+                maxLines: FlowBarMetrics.maxLines,
                 // Speech flows in word by word; a placeholder or an outcome
                 // summary is one thing being said, so it cross-fades whole.
                 flowsWordByWord: model.outcome == nil && !model.transcript.isEmpty,
-                reduceMotion: reduceMotion)
+                reduceMotion: reduceMotion,
+                onHeightChange: { transcriptHeight = $0 })
         }
         .padding(.horizontal, FlowBarMetrics.horizontalPadding)
-        // Height fixed, width intrinsic: the pill grows with the sentence and
-        // stops at `pillMaxWidth`, rather than being a constant slab with a word
-        // in the corner of it.
-        .frame(height: FlowBarMetrics.pillHeight)
+        .padding(.vertical, FlowBarMetrics.verticalPadding)
+        // Both axes intrinsic now: the pill widens with the sentence until
+        // `pillMaxWidth`, then grows downwards a line at a time until
+        // `pillMaxHeight`, after which the transcript scrolls inside it.
+        .frame(minHeight: FlowBarMetrics.pillMinHeight)
         // Material rather than a colour, so the pill reads as macOS chrome in
         // both appearances without naming a single light or dark value.
-        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .strokeBorder(borderStyle, lineWidth: 1)
-        }
+        .background(shape.fill(.ultraThinMaterial))
+        .overlay { shape.strokeBorder(borderStyle, lineWidth: 1) }
         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: model.outcome)
-        // Centres the pill in the window, leaving the margin transparent.
-        .frame(width: FlowBarMetrics.panelWidth, height: FlowBarMetrics.panelHeight)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: transcriptHeight)
+        // Bottom-aligned in a window sized for the tallest pill, so growing a
+        // line pushes the top edge up and leaves the bottom where the user's eye
+        // already is.
+        .frame(
+            width: FlowBarMetrics.panelWidth, height: FlowBarMetrics.panelHeight,
+            alignment: .bottom)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(displayText))
     }

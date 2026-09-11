@@ -390,7 +390,10 @@ public final class DictationCoordinator {
 
         let transcript: String
         do {
-            transcript = settings.vocabulary.apply(to: try await asr.finish())
+            // Vocabulary first, then polish: a corrected proper noun may be the
+            // last word, and it is the polished text that gets the full stop.
+            let raw = try await asr.finish()
+            transcript = settings.polish.apply(to: settings.vocabulary.apply(to: raw))
         } catch let error as WizardError {
             guard sessionID == id else { return }
             finalize(.failed(error), for: id)

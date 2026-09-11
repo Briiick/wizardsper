@@ -25,6 +25,9 @@ public final class Settings {
     public var showFlowBar = true { didSet { persist() } }
     public var keepHistory = true { didSet { persist() } }
     public var historyRetentionDays = 7 { didSet { persist() } }
+    /// Small certain corrections: finish the sentence, capitalise the start.
+    public var polish = TranscriptPolish.default { didSet { persist() } }
+
     /// Words the recogniser cannot produce, and what to write instead.
     /// See `Vocabulary`.
     public var vocabulary = Vocabulary.starter { didSet { persist() } }
@@ -54,6 +57,7 @@ public final class Settings {
         public var minimumHoldSeconds: Double
         public var inputGain: Double
         public var vocabulary: Vocabulary
+        public var polish: TranscriptPolish
     }
 
     public var snapshot: Snapshot {
@@ -62,7 +66,7 @@ public final class Settings {
             pasteAutomatically: pasteAutomatically, restorePasteboard: restorePasteboard,
             showFlowBar: showFlowBar, keepHistory: keepHistory,
             historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds,
-            inputGain: inputGain, vocabulary: vocabulary)
+            inputGain: inputGain, vocabulary: vocabulary, polish: polish)
     }
 
     public init(defaults: UserDefaults = .standard) {
@@ -84,6 +88,7 @@ public final class Settings {
         static let launchAtLogin = "launchAtLogin"
         static let inputGain = "inputGain"
         static let vocabulary = "vocabulary"
+        static let polish = "polish"
     }
 
     private func load() {
@@ -132,6 +137,11 @@ public final class Settings {
         {
             vocabulary = value
         }
+        if let data = defaults.data(forKey: Key.polish),
+            let value = try? decoder.decode(TranscriptPolish.self, from: data)
+        {
+            polish = value
+        }
     }
 
     private func persist() {
@@ -149,6 +159,7 @@ public final class Settings {
         defaults.set(launchAtLogin, forKey: Key.launchAtLogin)
         defaults.set(inputGain, forKey: Key.inputGain)
         defaults.set(try? encoder.encode(vocabulary), forKey: Key.vocabulary)
+        defaults.set(try? encoder.encode(polish), forKey: Key.polish)
     }
 }
 
