@@ -74,8 +74,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // recording. Getting the grant out of the way here means the first hold
         // is a normal one.
         Task { @MainActor in
+            // Deferred one run-loop turn past launch. Asking in
+            // applicationDidFinishLaunching itself fires before the process has
+            // finished registering with the window server, and the prompt is
+            // then dismissed out from under the user and reported as a denial.
+            try? await Task.sleep(for: .milliseconds(600))
+            let before = AudioCapture.microphoneAuthorization.rawValue
+            Log.audio.info("Microphone authorisation before request: \(before, privacy: .public)")
             do {
                 try await AudioCapture.ensureMicrophoneAccess()
+                Log.audio.info("Microphone authorised")
             } catch let error as WizardError {
                 self.status.statusText = error.errorDescription ?? "Microphone unavailable"
             } catch {

@@ -57,6 +57,13 @@ macOS will ask for three permissions. All three are load-bearing:
 ad-hoc, because TCC keys those grants to the code signature — an ad-hoc signature
 changes every build, so you would re-grant all three every time.
 
+The Hardened Runtime is on, so `Resources/Wizard.entitlements` must carry
+`com.apple.security.device.audio-input` even though the app is not sandboxed:
+that key is the runtime's Audio Input capability, not only a sandbox key.
+`NSMicrophoneUsageDescription` alone is not enough — without the entitlement,
+`AVCaptureDevice.requestAccess` returns `false` within milliseconds and no prompt
+is ever shown, which is indistinguishable from the user denying one.
+
 ## The CLI harness
 
 The recognition path is developed and checked against files before any

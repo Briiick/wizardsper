@@ -4,16 +4,18 @@
 <dict>
     <!-- Not sandboxed. A global CGEventTap (Input Monitoring) and a synthetic
          Cmd-V delivered to the frontmost app (Accessibility) are both
-         unavailable to a sandboxed process, and there is no entitlement that
-         grants them.
-
-         Nothing else is listed on purpose: the sandbox entitlements such as
-         com.apple.security.device.audio-input do nothing outside the sandbox,
-         and requesting entitlements that need a provisioning profile would make
-         a plain Apple Development signature fail. Microphone access for a
-         non-sandboxed app is governed by TCC plus NSMicrophoneUsageDescription
-         in Info.plist. -->
+         unavailable to a sandboxed process, and no entitlement grants them. -->
     <key>com.apple.security.app-sandbox</key>
     <false/>
+
+    <!-- Required even though the sandbox is off, because the Hardened Runtime is
+         on: this is the runtime's Audio Input resource-access capability, not
+         only a sandbox key. Without it AVCaptureDevice.requestAccess returns
+         false in a few milliseconds and no system prompt is ever shown — which
+         reads exactly like the user denying a prompt they never saw.
+         NSMicrophoneUsageDescription in Info.plist is necessary too, but it is
+         not sufficient on its own. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>
