@@ -189,12 +189,37 @@ struct TranscriptionHistoryTests {
             TranscriptionRecord(outcome: .pasted("x"), durationSeconds: 1, tier: .ms560)?.outcome
                 == "pasted")
         #expect(
-            TranscriptionRecord(outcome: .copied("x"), durationSeconds: 1, tier: .ms560)?.outcome
+            TranscriptionRecord(
+                outcome: .copied("x", why: .accessibilityDenied), durationSeconds: 1, tier: .ms560
+            )?.outcome
                 == "copied")
         #expect(TranscriptionRecord(outcome: .nothing, durationSeconds: 1, tier: .ms560) == nil)
         #expect(
             TranscriptionRecord(
                 outcome: .failed(.noAudioCaptured), durationSeconds: 1, tier: .ms560) == nil)
+    }
+
+    /// "Copied to clipboard" for all three reasons is what made a missing
+    /// Accessibility grant read as the app silently losing the paste.
+    @MainActor
+    @Test("a copied outcome says which of the three reasons it was")
+    func copyReasonsAreDistinct() {
+        let denied = SessionOutcome.copied("x", why: .accessibilityDenied)
+        let noTarget = SessionOutcome.copied("x", why: .noTarget)
+        let disabled = SessionOutcome.copied("x", why: .autoPasteDisabled)
+
+        #expect(denied != noTarget)
+        #expect(noTarget != disabled)
+        #expect(denied == SessionOutcome.copied("x", why: .accessibilityDenied))
+
+        // All three keep the transcript recoverable and none is a failure.
+        for outcome in [denied, noTarget, disabled] {
+            #expect(outcome.transcript == "x")
+            #expect(!outcome.isFailure)
+        }
+        // Only the actionable one names the thing the user can do.
+        #expect(denied.summary.contains("Accessibility"))
+        #expect(!disabled.summary.contains("Accessibility"))
     }
 
     @MainActor
