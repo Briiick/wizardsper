@@ -177,6 +177,21 @@ tensor, and the only symptom is a transcript that decays into noise. Every model
 output goes through `MLArrayReader`, which reads the real strides and takes a
 dense fast path only after confirming the strides actually are dense.
 
+### The transcript is anchored to its trailing edge
+
+The pill shows one line, but it truncates at the *head*, not the tail. A
+left-aligned line with `.truncationMode(.tail)` hides the newest words the moment
+speech runs past the pill's width — the bar freezes on the opening of the
+sentence and stops reporting what is happening now, which is the one job a live
+meter has. So the line grows leftwards out of view and the newest word stays on
+screen, with each word fading and sliding in on the right as it arrives.
+
+Word identity is the array index, which is safe because greedy RNN-T only
+appends: an emitted token is never revised, so word *n* stays word *n*. The final
+word grows in place as more sub-word pieces arrive, and SwiftUI updates that one
+without a transition — correct, since completing a word is not the same as
+starting one.
+
 ### Input gain is not a quality knob
 
 The dashboard has a microphone gain slider, and it is deliberately paired with a
