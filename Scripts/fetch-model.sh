@@ -8,7 +8,7 @@
 set -euo pipefail
 
 CHUNK="${1:-560}"
-DEST_ROOT="${2:-$HOME/Library/Application Support/Wizard/Models}"
+DEST_ROOT="${2:-$HOME/Library/Application Support/Wizardsper/Models}"
 REPO="FluidInference/nemotron-speech-streaming-en-0.6b-coreml"
 
 case "$CHUNK" in

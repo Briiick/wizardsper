@@ -1,4 +1,4 @@
-name: Wizard
+name: Wizardsper
 options:
   bundleIdPrefix: com.bricken
   deploymentTarget:
@@ -22,17 +22,17 @@ settings:
     OTHER_CODE_SIGN_FLAGS: "--timestamp=none"
 
 targets:
-  # Split out as its own module so the app target can `import WizardKit`, and so
+  # Split out as its own module so the app target can `import WizardsperKit`, and so
   # the CLI harness and the unit tests build the exact same code the app runs.
-  WizardKit:
+  WizardsperKit:
     type: framework
     platform: macOS
     sources:
-      - path: Sources/WizardKit
+      - path: Sources/WizardsperKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.bricken.wizard.kit
-        PRODUCT_NAME: WizardKit
+        PRODUCT_BUNDLE_IDENTIFIER: com.bricken.wizardsper.kit
+        PRODUCT_NAME: WizardsperKit
         DEFINES_MODULE: YES
         GENERATE_INFOPLIST_FILE: YES
         DYLIB_INSTALL_NAME_BASE: "@rpath"
@@ -44,24 +44,24 @@ targets:
       - sdk: Accelerate.framework
       - sdk: AppKit.framework
 
-  Wizard:
+  Wizardsper:
     type: application
     platform: macOS
     sources:
-      - path: Sources/WizardApp
-      - path: Resources/Wizard.icns
+      - path: Sources/WizardsperApp
+      - path: Resources/Wizardsper.icns
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.bricken.wizard
-        PRODUCT_NAME: Wizard
+        PRODUCT_BUNDLE_IDENTIFIER: com.bricken.wizardsper
+        PRODUCT_NAME: Wizardsper
         INFOPLIST_FILE: Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Resources/Wizard.entitlements
+        CODE_SIGN_ENTITLEMENTS: Resources/Wizardsper.entitlements
         ENABLE_APP_SANDBOX: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         COMBINE_HIDPI_IMAGES: YES
     dependencies:
-      - target: WizardKit
+      - target: WizardsperKit
         embed: true
         codeSign: true
       - sdk: ServiceManagement.framework

@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "Wizard",
+    name: "Wizardsper",
     platforms: [.macOS("26.0")],
     products: [
-        .library(name: "WizardKit", targets: ["WizardKit"]),
-        .executable(name: "wizard-cli", targets: ["wizardcli"]),
+        .library(name: "WizardsperKit", targets: ["WizardsperKit"]),
+        .executable(name: "wizardsper-cli", targets: ["wizardspercli"]),
     ],
     targets: [
         .target(
-            name: "WizardKit",
-            path: "Sources/WizardKit",
+            name: "WizardsperKit",
+            path: "Sources/WizardsperKit",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
-            name: "wizardcli",
-            dependencies: ["WizardKit"],
-            path: "Sources/wizardcli",
+            name: "wizardspercli",
+            dependencies: ["WizardsperKit"],
+            path: "Sources/wizardspercli",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
-            name: "WizardKitTests",
-            dependencies: ["WizardKit"],
-            path: "Tests/WizardKitTests",
+            name: "WizardsperKitTests",
+            dependencies: ["WizardsperKit"],
+            path: "Tests/WizardsperKitTests",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

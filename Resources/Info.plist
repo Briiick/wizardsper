@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIconFile</key>
-    <string>Wizard</string>
+    <string>Wizardsper</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -26,7 +26,7 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Wizard listens while you hold the dictation key and transcribes your speech on-device.</string>
+    <string>Wizardsper listens while you hold the dictation key and transcribes your speech on-device.</string>
     <key>NSHumanReadableCopyright</key>
     <string></string>
     <key>NSPrincipalClass</key>

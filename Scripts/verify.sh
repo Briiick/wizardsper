@@ -20,21 +20,21 @@ swift test 2>&1 | grep -E "Test run with|✘" || true
 swift test >/dev/null 2>&1; check $?
 
 step "app bundle"
-./Scripts/build-app.sh >/tmp/wizard-verify-app.log 2>&1
-if grep -q "BUILD SUCCEEDED" /tmp/wizard-verify-app.log; then
+./Scripts/build-app.sh >/tmp/wizardsper-verify-app.log 2>&1
+if grep -q "BUILD SUCCEEDED" /tmp/wizardsper-verify-app.log; then
   echo "  ok"
-  codesign -dv build/Build/Products/Debug/Wizard.app 2>&1 \
+  codesign -dv build/Build/Products/Debug/Wizardsper.app 2>&1 \
     | grep -E "Identifier|TeamIdentifier" | sed 's/^/  /'
 else
-  echo "  FAILED — see /tmp/wizard-verify-app.log"; fail=1
+  echo "  FAILED — see /tmp/wizardsper-verify-app.log"; fail=1
 fi
 
 step "recognition against a known transcript"
 swift build -c release >/dev/null 2>&1
-AUDIO=/tmp/wizard_audio/librispeech/ls_00.wav
-REF=/tmp/wizard_audio/librispeech/ls_00.txt
+AUDIO=/tmp/wizardsper_audio/librispeech/ls_00.wav
+REF=/tmp/wizardsper_audio/librispeech/ls_00.txt
 if [ -f "$AUDIO" ] && [ -f "$REF" ]; then
-  ./.build/release/wizard-cli transcribe "$AUDIO" --reference "$(cat "$REF")" 2>/dev/null \
+  ./.build/release/wizardsper-cli transcribe "$AUDIO" --reference "$(cat "$REF")" 2>/dev/null \
     | tail -2 | sed 's/^/  /'
 else
   echo "  skipped — no fixture at $AUDIO"
@@ -44,7 +44,7 @@ step "flow bar layout (rasterised)"
 ./Scripts/check-layout.sh 2>&1 | sed 's/^/  /'; check ${PIPESTATUS[0]}
 
 step "live capture path"
-./.build/release/wizard-cli listen --seconds 3 2>/dev/null | tail -3 | sed 's/^/  /'
+./.build/release/wizardsper-cli listen --seconds 3 2>/dev/null | tail -3 | sed 's/^/  /'
 
 printf '\n'
 if [ "$fail" -eq 0 ]; then echo "all checks passed"; else echo "SOME CHECKS FAILED"; fi

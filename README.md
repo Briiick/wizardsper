@@ -1,4 +1,4 @@
-# Wizard
+# Wizardsper
 
 Hold a key, talk, release. The transcript lands in whatever app you were already
 typing in. Everything runs on-device.
@@ -41,20 +41,20 @@ criticism, heavy with proper nouns — not the *test-clean* set the publisher's
 2.12% figure comes from, so the numbers are not comparable. And the 160 ms tier's
 published figure is "~10% on 20 files"; through this front-end it measures within
 half a point of the 560 ms tier, so if you want the lower latency it is a real
-option. Reproduce either with `wizard-cli`.
+option. Reproduce either with `wizardsper-cli`.
 
 ## Getting it running
 
 ```bash
 ./Scripts/build-app.sh          # generates the Xcode project, builds, signs
-open build/Build/Products/Debug/Wizard.app
+open build/Build/Products/Debug/Wizardsper.app
 ```
 
 The first launch downloads the 560 ms model (~615 MB) into
-`~/Library/Application Support/Wizard/Models/`. To pre-seed it instead:
+`~/Library/Application Support/Wizardsper/Models/`. To pre-seed it instead:
 
 ```bash
-./Scripts/fetch-model.sh 560 ~/Library/Application\ Support/Wizard/Models
+./Scripts/fetch-model.sh 560 ~/Library/Application\ Support/Wizardsper/Models
 ```
 
 macOS will ask for three permissions. All three are load-bearing:
@@ -69,7 +69,7 @@ macOS will ask for three permissions. All three are load-bearing:
 ad-hoc, because TCC keys those grants to the code signature — an ad-hoc signature
 changes every build, so you would re-grant all three every time.
 
-The Hardened Runtime is on, so `Resources/Wizard.entitlements` must carry
+The Hardened Runtime is on, so `Resources/Wizardsper.entitlements` must carry
 `com.apple.security.device.audio-input` even though the app is not sandboxed:
 that key is the runtime's Audio Input capability, not only a sandbox key.
 `NSMicrophoneUsageDescription` alone is not enough — without the entitlement,
@@ -97,13 +97,13 @@ microphone is involved.
 ```bash
 swift build -c release
 
-.build/release/wizard-cli probe
+.build/release/wizardsper-cli probe
     # every model's real input/output signatures, and the framing arithmetic
 
-.build/release/wizard-cli transcribe speech.wav --reference "ground truth"
+.build/release/wizardsper-cli transcribe speech.wav --reference "ground truth"
     # transcript, realtime factor, WER
 
-.build/release/wizard-cli sweep speech.wav --reference "ground truth"
+.build/release/wizardsper-cli sweep speech.wav --reference "ground truth"
     # the same audio under every framing policy, scored side by side
 ```
 
@@ -263,7 +263,7 @@ std::runtime_error during type inference for ios17.slice_by_index: zero shape er
 ```
 
 It is CoreML building the encoder's *default* function, where `cache_len` is 0
-and the graph's slice over the cache therefore has zero length. Nothing in Wizard
+and the graph's slice over the cache therefore has zero length. Nothing in Wizardsper
 ever runs with `cache_len == 0` — a session seeds it to 1, which is why
 `StreamingASR.reset()` does that rather than zeroing it with the rest of the
 cache. The message is not reachable from any real prediction, and `warmUp()`
@@ -291,7 +291,7 @@ instant you hold the key" — with a stack that points at audio, not at isolatio
 `AudioCapture.makeTapBlock` is a `nonisolated static func` for exactly this
 reason. Marking the closure `@Sendable` would also detach it, but
 `AVAudioConverter` and `AVAudioPCMBuffer` are not `Sendable` and could not then
-be captured. `wizard-cli listen` exercises this path outside the app.
+be captured. `wizardsper-cli listen` exercises this path outside the app.
 
 **The converter's input block must be pre-bridged.** `AVAudioConverterInputBlock`
 imports into Swift as a plain closure, and `convertToBuffer:error:withInputFromBlock:`
@@ -322,7 +322,7 @@ by each tier's `metadata.json`.
 ## Layout
 
 ```
-Sources/WizardKit/       framework — everything that is not the UI
+Sources/WizardsperKit/       framework — everything that is not the UI
   Model/                 tier, metadata, tokenizer, framing, installer
   ASR/                   model bundle, StreamingASR actor, file loader
   Audio/                 ring buffer, level box, AVAudioEngine capture
@@ -331,9 +331,9 @@ Sources/WizardKit/       framework — everything that is not the UI
   Paste/                 pasteboard snapshot, Cmd-V, restore
   History/               transcript history
   Support/               errors, logging, MLArrayReader, settings
-Sources/WizardApp/       the menu-bar app: delegate, flow bar, popover, dashboard
-Sources/wizardcli/       the development harness
-Tests/WizardKitTests/    37 tests, including end-to-end recognition
+Sources/WizardsperApp/       the menu-bar app: delegate, flow bar, popover, dashboard
+Sources/wizardspercli/       the development harness
+Tests/WizardsperKitTests/    37 tests, including end-to-end recognition
 ```
 
 ## Licence

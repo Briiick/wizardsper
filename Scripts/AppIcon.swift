@@ -1,6 +1,6 @@
 import AppKit
 
-/// Draws Wizard's application icon: the same mark as the menu bar, on the
+/// Draws Wizardsper's application icon: the same mark as the menu bar, on the
 /// standard macOS rounded square.
 ///
 /// The menu-bar glyph and the app icon have to be recognisably the same thing,
@@ -65,7 +65,7 @@ enum AppIcon {
         ctx.saveGState()
         shape.addClip()
 
-        // The ground: Wizard's orange, deepened towards the bottom so the plate
+        // The ground: Wizardsper's orange, deepened towards the bottom so the plate
         // reads as lit from above rather than as a flat swatch.
         let gradient = NSGradient(colors: [
             NSColor(srgbRed: 1.00, green: 0.68, blue: 0.28, alpha: 1),
@@ -97,7 +97,7 @@ enum AppIcon {
         ctx.setShadow(
             offset: CGSize(width: 0, height: -3 * k), blur: 10 * k,
             color: NSColor(srgbRed: 0.4, green: 0.13, blue: 0, alpha: 0.45).cgColor)
-        let mark = WizardIcon.image(listening: true)
+        let mark = WizardsperIcon.image(listening: true)
         let white = NSImage(size: mark.size, flipped: false) { r in
             mark.draw(in: r)
             NSColor.white.set()

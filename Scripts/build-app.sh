@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the Xcode project and build Wizard.app.
+# Generate the Xcode project and build Wizardsper.app.
 #
 # Signed with a real Apple Development identity rather than ad-hoc on purpose:
 # TCC keys its Microphone, Input Monitoring and Accessibility grants to the code
@@ -36,14 +36,14 @@ fi
 
 xcodegen generate --quiet
 xcodebuild \
-  -project Wizard.xcodeproj \
-  -scheme Wizard \
+  -project Wizardsper.xcodeproj \
+  -scheme Wizardsper \
   -configuration "$CONFIG" \
   -derivedDataPath "$DERIVED" \
   "${SIGN_ARGS[@]}" \
   build "$@"
 
-APP="$DERIVED/Build/Products/$CONFIG/Wizard.app"
+APP="$DERIVED/Build/Products/$CONFIG/Wizardsper.app"
 echo
 echo "built: $APP"
 codesign -dv "$APP" 2>&1 | sed 's/^/  /'
