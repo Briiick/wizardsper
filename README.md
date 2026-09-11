@@ -144,6 +144,23 @@ tensor, and the only symptom is a transcript that decays into noise. Every model
 output goes through `MLArrayReader`, which reads the real strides and takes a
 dense fast path only after confirming the strides actually are dense.
 
+### A harmless noise at load
+
+Every model load prints this to stderr, once:
+
+```
+E5RT encountered an STL exception. msg = Failed to PropagateInputTensorShapes:
+std::runtime_error during type inference for ios17.slice_by_index: zero shape error.
+```
+
+It is CoreML building the encoder's *default* function, where `cache_len` is 0
+and the graph's slice over the cache therefore has zero length. Nothing in Wizard
+ever runs with `cache_len == 0` — a session seeds it to 1, which is why
+`StreamingASR.reset()` does that rather than zeroing it with the rest of the
+cache. The message is not reachable from any real prediction, and `warmUp()`
+proves the encoder is live before the first hold. There is no way to suppress it
+from Swift; it is written directly by the CoreML runtime.
+
 ### The audio tap
 
 The tap callback runs on a real-time render thread and does no allocation and
