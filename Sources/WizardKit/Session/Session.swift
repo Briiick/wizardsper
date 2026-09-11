@@ -1,0 +1,90 @@
+import Foundation
+
+/// Identity of one press-and-hold. Every async hop carries it so late work from
+/// an abandoned session can be dropped instead of corrupting the current one.
+public struct SessionID: Hashable, Sendable, CustomStringConvertible {
+    public let uuid: UUID
+    public init() { self.uuid = UUID() }
+    public var description: String { String(uuid.uuidString.prefix(8)) }
+}
+
+/// The only three states a session passes through.
+///
+/// `idle → listening → finishing → idle`. There is no path that skips
+/// `finishing`: even a cancel goes through it, because that is where the single
+/// terminal outcome is published.
+public enum SessionState: Equatable, Sendable {
+    case idle
+    /// Key is held, audio is being captured and fed to the recogniser.
+    case listening
+    /// Key released. Draining the tail of the audio, then deciding an outcome.
+    case finishing
+}
+
+/// The single terminal result of a session. Exactly one of these is published
+/// per session, and the flow bar does not dismiss until it sees one.
+public enum SessionOutcome: Sendable, Equatable {
+    /// Text was placed on the pasteboard and Cmd-V was delivered to an app.
+    case pasted(String)
+    /// Text is on the pasteboard, but there was no app to paste into.
+    case copied(String)
+    /// The session ended with nothing to show: no speech, or too short.
+    case nothing
+    case failed(WizardError)
+
+    public var transcript: String? {
+        switch self {
+        case .pasted(let text), .copied(let text): return text
+        case .nothing, .failed: return nil
+        }
+    }
+
+    public var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
+    /// What the flow bar says while it fades out.
+    public var summary: String {
+        switch self {
+        case .pasted: return "Pasted"
+        case .copied: return "Copied to clipboard"
+        case .nothing: return "Nothing heard"
+        case .failed(let error): return error.errorDescription ?? "Failed"
+        }
+    }
+
+    public static func == (lhs: SessionOutcome, rhs: SessionOutcome) -> Bool {
+        switch (lhs, rhs) {
+        case (.pasted(let a), .pasted(let b)): return a == b
+        case (.copied(let a), .copied(let b)): return a == b
+        case (.nothing, .nothing): return true
+        case (.failed(let a), .failed(let b)):
+            return a.errorDescription == b.errorDescription
+        default: return false
+        }
+    }
+}
+
+/// What the UI renders. A value type so it can cross to the main actor whole.
+public struct SessionSnapshot: Sendable, Equatable {
+    public var id: SessionID?
+    public var state: SessionState
+    public var transcript: String
+    public var level: Float
+    public var outcome: SessionOutcome?
+
+    public static let idle = SessionSnapshot(
+        id: nil, state: .idle, transcript: "", level: 0, outcome: nil)
+
+    public init(
+        id: SessionID?, state: SessionState, transcript: String, level: Float,
+        outcome: SessionOutcome?
+    ) {
+        self.id = id
+        self.state = state
+        self.transcript = transcript
+        self.level = level
+        self.outcome = outcome
+    }
+}
