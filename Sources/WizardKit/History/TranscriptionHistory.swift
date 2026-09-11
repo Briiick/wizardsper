@@ -325,6 +325,8 @@ private actor HistoryStore {
     /// Never throws: a history that cannot be read is recovered from, not
     /// reported. An undecodable file is moved aside first, so the user's
     /// transcripts still exist on disk even though this build cannot read them.
+    /// When it cannot be moved either, `save` is blocked instead — recovering
+    /// from an unreadable file must never mean writing over it.
     func load() -> [TranscriptionRecord] {
         // Whatever was blocking writes, this read decides it afresh: a file that
         // opens now is a file whose contents are back in memory and therefore

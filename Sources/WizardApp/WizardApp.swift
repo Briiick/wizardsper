@@ -41,6 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var modelTask: Task<Void, Never>?
     private var phaseTask: Task<Void, Never>?
+    /// Latches so the second `applicationShouldTerminate` — the one that arrives
+    /// after `reply(toApplicationShouldTerminate:)` — does not start over.
+    private var isTerminating = false
 
     /// How long the pill lingers after the outcome lands. A failure stays up
     /// longer because its text is the only place the reason is shown.
@@ -91,6 +94,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.refreshPermissions()
         }
+    }
+
+    /// Hold the quit long enough to finish writing history.
+    ///
+    /// `applicationWillTerminate` cannot await, and the history write is a
+    /// detached task — so by default the very last dictation, the one most
+    /// likely to matter, is the one that never reaches disk. `terminateLater`
+    /// is the supported way to buy that time back, and the timeout is there so
+    /// a stuck write can delay quitting but never prevent it.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else { return .terminateNow }
+        isTerminating = true
+
+        coordinator.cancel()
+        hotkey?.stop()
+        modelTask?.cancel()
+        phaseTask?.cancel()
+        flowBar?.dismissImmediately()
+
+        Task { @MainActor in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await self.history.flush() }
+                group.addTask { try? await Task.sleep(for: .seconds(2)) }
+                await group.next()
+                group.cancelAll()
+            }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -131,11 +131,24 @@ public actor ModelInstaller {
             return directory
         }
 
-        if let running = inFlight[tier] {
-            return try await withTaskCancellationHandler {
-                try await running.value
-            } onCancel: {
-                running.cancel()
+        // A predecessor that was cancelled — by `remove`, or by another waiter's
+        // Cancel button — must not answer for this caller: adopting it rethrew
+        // that `CancellationError` here, so the install the user had just asked
+        // for failed instantly without ever running. It is still waited out
+        // before a fresh run starts, because its cleanup deletes `.partial` files
+        // the fresh run is about to write.
+        while let running = inFlight[tier] {
+            do {
+                return try await withTaskCancellationHandler {
+                    try await running.value
+                } onCancel: {
+                    running.cancel()
+                }
+            } catch is CancellationError {
+                // This caller's own cancellation is an answer; only somebody
+                // else's is worth starting over from.
+                try Task.checkCancellation()
+                retire(running, for: tier)
             }
         }
 
@@ -147,12 +160,21 @@ public actor ModelInstaller {
             } onCancel: {
                 work.cancel()
             }
-            inFlight[tier] = nil
+            retire(work, for: tier)
             return result
         } catch {
-            inFlight[tier] = nil
+            retire(work, for: tier)
             throw error
         }
+    }
+
+    /// Forgets `work`, unless a fresh install has already taken its place.
+    ///
+    /// A cancelled install is replaced while it is still unwinding, so clearing
+    /// the slot unconditionally would unregister that successor and leave the
+    /// next caller free to start a second download over the same `.partial` files.
+    private func retire(_ work: Task<URL, any Error>, for tier: NemotronTier) {
+        if inFlight[tier] == work { inFlight[tier] = nil }
     }
 
     private func performInstall(_ tier: NemotronTier) async throws -> URL {
@@ -325,10 +347,19 @@ public actor ModelInstaller {
             try manager.createDirectory(at: unpacked, withIntermediateDirectories: true)
 
             // Detached so the blocking `unzip` never runs on this actor's
-            // executor: `status(for:)` has to stay answerable while it works.
-            try await Task.detached(priority: .userInitiated) {
-                try Self.unpack(zipURL, into: unpacked)
-            }.value
+            // executor: `status(for:)` has to stay answerable while it works. A
+            // detached task inherits no cancellation, so the box is what carries a
+            // cancel across to the child — without it, cancelling an import buys
+            // nothing until `unzip` decides to finish on its own.
+            let control = ProcessBox()
+            let unpacking = Task.detached(priority: .userInitiated) {
+                try Self.unpack(zipURL, into: unpacked, control: control)
+            }
+            try await withTaskCancellationHandler {
+                try await unpacking.value
+            } onCancel: {
+                control.cancel()
+            }
             try Task.checkCancellation()
 
             guard let root = Self.locateBundle(of: tier, under: unpacked) else {
@@ -767,7 +798,7 @@ public actor ModelInstaller {
     /// Extracts a zip into `directory` after vetting every entry name.
     ///
     /// Synchronous and blocking; callers run it off this actor.
-    private static func unpack(_ zipURL: URL, into directory: URL) throws {
+    private static func unpack(_ zipURL: URL, into directory: URL, control: ProcessBox) throws {
         let unzip = "/usr/bin/unzip"
         guard FileManager.default.isExecutableFile(atPath: unzip) else {
             throw WizardError.downloadFailed("\(unzip) is missing, so the archive cannot be opened")
@@ -780,7 +811,7 @@ public actor ModelInstaller {
         // ".." component or an absolute path would otherwise be extracted outside
         // the staging directory — a zip slip — and could overwrite anything the
         // user can write to.
-        let listing = try run(unzip, ["-Z1", "--", zipURL.path])
+        let listing = try run(unzip, ["-Z1", "--", zipURL.path], control: control)
         let names = listing.split(separator: "\n").map(String.init)
         guard names.isEmpty == false else {
             throw WizardError.downloadFailed("\(zipURL.lastPathComponent) is empty")
@@ -793,11 +824,22 @@ public actor ModelInstaller {
             }
         }
 
-        _ = try run(unzip, ["-qq", "-o", "--", zipURL.path, "-d", directory.path])
+        _ = try run(
+            unzip, ["-qq", "-o", "--", zipURL.path, "-d", directory.path], control: control)
     }
 
     /// Runs a tool and returns its standard output, throwing on a bad exit status.
-    private static func run(_ executable: String, _ arguments: [String]) throws -> String {
+    ///
+    /// Both pipes are drained at once because `unzip` writes to both. Reading
+    /// stdout to the end first lets a child with more than a pipe buffer (64 KB)
+    /// of warnings block writing stderr while this thread blocks reading a stdout
+    /// that will never close: the import then hangs there permanently, with no
+    /// timeout and nothing left to notice it. `control` terminates the child when
+    /// the enclosing task is cancelled, so a cancelled import stops the extraction
+    /// instead of waiting it out.
+    private static func run(_ executable: String, _ arguments: [String], control: ProcessBox)
+        throws -> String
+    {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -814,14 +856,28 @@ public actor ModelInstaller {
                 "could not start \(executable): \(error.localizedDescription)")
         }
 
-        // Drained before waiting: a full pipe buffer would block the child
-        // forever while we block waiting for the child.
+        control.adopt(process)
+        // Released once the child has been reaped: its identifier goes back to the
+        // system then, and a later signal could land on whatever inherited it.
+        defer { control.release() }
+
+        let collected = DataBox()
+        let errorHandle = errors.fileHandleForReading
+        let drained = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            collected.store(errorHandle.readDataToEndOfFile())
+            drained.signal()
+        }
         let outputData = output.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        drained.wait()
         process.waitUntilExit()
 
+        // Checked before the exit status, which after a terminate is only the
+        // signal that did it and says nothing about the archive.
+        if control.isCancelled { throw CancellationError() }
+
         let tool = URL(fileURLWithPath: executable).lastPathComponent
-        let detail = String(decoding: errorData, as: UTF8.self)
+        let detail = String(decoding: collected.take(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let status = process.terminationStatus
         // unzip exits 1 for warnings it recovered from. The structural check that
@@ -987,6 +1043,77 @@ private final class ProgressTally: @unchecked Sendable {
         defer { lock.unlock() }
         let live = active.values.reduce(Int64(0)) { $0 + $1.countOfBytesReceived }
         return (settledBytes + live, currentFile)
+    }
+}
+
+/// Collects a child process's standard error on a second thread.
+///
+/// It exists to be `Sendable` so the drain can hand the bytes back: the semaphore
+/// in `run` orders the write before the read, and the lock keeps that ordering
+/// true rather than merely likely.
+private final class DataBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func store(_ bytes: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        data = bytes
+    }
+
+    func take() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
+
+/// Holds the `unzip` child so a cancellation can reach it across the detached
+/// task that is blocked waiting on it.
+///
+/// Same early-cancel problem as `CancellableTaskBox`: the cancel can arrive
+/// before the process is launched, so the box remembers it and terminates on
+/// adoption. It reports the cancel afterwards too, so `run` can tell a child it
+/// killed itself from one that failed on its own.
+private final class ProcessBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func adopt(_ process: Process) {
+        lock.lock()
+        let alreadyCancelled = cancelled
+        self.process = process
+        lock.unlock()
+        if alreadyCancelled { Self.terminate(process) }
+    }
+
+    /// Forgets the child once it has been reaped, so a late cancel cannot signal a
+    /// process identifier the system has since handed to somebody else.
+    func release() {
+        lock.lock()
+        defer { lock.unlock() }
+        process = nil
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let process = self.process
+        lock.unlock()
+        if let process { Self.terminate(process) }
+    }
+
+    private static func terminate(_ process: Process) {
+        // `terminate()` raises an Objective-C exception for a process that was
+        // never launched, and no `catch` in Swift could contain it.
+        if process.isRunning { process.terminate() }
     }
 }
 
