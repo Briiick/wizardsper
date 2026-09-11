@@ -56,6 +56,9 @@ public final class AudioCapture: @unchecked Sendable {
     /// of unbounded work a render thread must not do.
     private let tapContext = TapContext()
 
+    /// Input gain, read once per buffer on the render thread.
+    public let gain: GainBox
+
     /// The converter's input source, built once in `init` and held as a real
     /// Objective-C block.
     ///
@@ -83,9 +86,10 @@ public final class AudioCapture: @unchecked Sendable {
 
     @MainActor public var isRunning: Bool { running }
 
-    public init(ring: AudioRingBuffer, level: LevelBox) {
+    public init(ring: AudioRingBuffer, level: LevelBox, gain: GainBox = GainBox()) {
         self.ring = ring
         self.level = level
+        self.gain = gain
 
         let context = self.tapContext
         // Hand the converter the buffer the tap just parked, exactly once per
@@ -233,7 +237,8 @@ public final class AudioCapture: @unchecked Sendable {
         inputBlock: @escaping @Sendable @convention(block) (AVAudioPacketCount, UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer?,
         context: TapContext,
         ring: AudioRingBuffer,
-        level: LevelBox
+        level: LevelBox,
+        gain: GainBox
     ) -> AVAudioNodeTapBlock {
         { buffer, _ in
             // ---- render thread, real-time deadline ----
@@ -256,6 +261,21 @@ public final class AudioCapture: @unchecked Sendable {
 
             let frames = Int(output.frameLength)
             guard frames > 0, let channel = output.floatChannelData?[0] else { return }
+
+            // Applied in place, before the meter and the ring: the number the
+            // user sees on the meter has to be the number the recogniser hears,
+            // or calibrating against it would be calibrating against nothing.
+            // Two vDSP passes over a few hundred samples, no allocation.
+            var scale = gain.current
+            if scale != 1 {
+                vDSP_vsmul(channel, 1, &scale, channel, 1, vDSP_Length(frames))
+                // Clip rather than let gain run the signal past full scale.
+                // Wrapped or out-of-range samples produce a log-mel surface the
+                // model has never seen, which is worse than the quiet original.
+                var low: Float = -1
+                var high: Float = 1
+                vDSP_vclip(channel, 1, &low, &high, channel, 1, vDSP_Length(frames))
+            }
 
             var rms: Float = 0
             vDSP_rmsqv(channel, 1, &rms, vDSP_Length(frames))
@@ -318,6 +338,7 @@ public final class AudioCapture: @unchecked Sendable {
         let level = self.level
         let context = self.tapContext
         let inputBlock = self.converterInput
+        let gain = self.gain
 
         // Built by a nonisolated function — see `makeTapBlock` for why that is
         // load-bearing rather than stylistic.
@@ -325,7 +346,7 @@ public final class AudioCapture: @unchecked Sendable {
             onBus: 0, bufferSize: Self.tapBufferSize, format: inputFormat,
             block: Self.makeTapBlock(
                 converter: converter, output: output, inputBlock: inputBlock,
-                context: context, ring: ring, level: level))
+                context: context, ring: ring, level: level, gain: gain))
 
         engine.prepare()
         do {

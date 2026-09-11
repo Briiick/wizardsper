@@ -49,6 +49,13 @@ final class DashboardModel {
     /// Re-read what is on disk. Called whenever the model pane appears.
     var onRefresh: () -> Void = {}
 
+    /// Live input level, 0...1 RMS, already gained. Polled at 60 Hz while the
+    /// microphone test is running.
+    var inputLevel: @MainActor () -> Float = { 0 }
+    /// Start and stop capture with no recogniser attached, for gain calibration.
+    var onStartLevelPreview: () -> Void = {}
+    var onStopLevelPreview: () -> Void = {}
+
     init() {}
 }
 
@@ -163,6 +170,8 @@ struct DashboardView: View {
                     "Smaller chunks answer sooner; larger chunks hear more context before committing to a word."
                 )
             }
+
+            InputGainSection(settings: settings, model: model)
 
             Section("After a hold") {
                 Toggle("Paste into the frontmost app", isOn: $settings.pasteAutomatically)

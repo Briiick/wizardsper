@@ -25,6 +25,13 @@ public final class Settings {
     public var showFlowBar = true { didSet { persist() } }
     public var keepHistory = true { didSet { persist() } }
     public var historyRetentionDays = 7 { didSet { persist() } }
+    /// Linear input gain applied to captured audio before recognition.
+    ///
+    /// Not a preference so much as a calibration: microphones differ by more
+    /// than an order of magnitude in the level they deliver for the same voice,
+    /// and speech that arrives too quiet decodes to blanks rather than to a bad
+    /// transcript. See `GainBox`.
+    public var inputGain: Double = 1 { didSet { persist() } }
     /// Holds shorter than this are treated as an accidental tap and produce
     /// `.nothing` rather than a transcript.
     public var minimumHoldSeconds = 0.25 { didSet { persist() } }
@@ -41,6 +48,7 @@ public final class Settings {
         public var keepHistory: Bool
         public var historyRetentionDays: Int
         public var minimumHoldSeconds: Double
+        public var inputGain: Double
     }
 
     public var snapshot: Snapshot {
@@ -48,7 +56,8 @@ public final class Settings {
             chord: chord, tier: tier, framing: framing,
             pasteAutomatically: pasteAutomatically, restorePasteboard: restorePasteboard,
             showFlowBar: showFlowBar, keepHistory: keepHistory,
-            historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds)
+            historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds,
+            inputGain: inputGain)
     }
 
     public init(defaults: UserDefaults = .standard) {
@@ -68,6 +77,7 @@ public final class Settings {
         static let historyRetentionDays = "historyRetentionDays"
         static let minimumHoldSeconds = "minimumHoldSeconds"
         static let launchAtLogin = "launchAtLogin"
+        static let inputGain = "inputGain"
     }
 
     private func load() {
@@ -108,6 +118,9 @@ public final class Settings {
         if defaults.object(forKey: Key.launchAtLogin) != nil {
             launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
         }
+        if let gain = defaults.object(forKey: Key.inputGain) as? Double {
+            inputGain = Double(GainBox.clamp(Float(gain)))
+        }
     }
 
     private func persist() {
@@ -123,6 +136,7 @@ public final class Settings {
         defaults.set(historyRetentionDays, forKey: Key.historyRetentionDays)
         defaults.set(minimumHoldSeconds, forKey: Key.minimumHoldSeconds)
         defaults.set(launchAtLogin, forKey: Key.launchAtLogin)
+        defaults.set(inputGain, forKey: Key.inputGain)
     }
 }
 

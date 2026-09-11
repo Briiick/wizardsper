@@ -37,6 +37,7 @@ public final class DictationCoordinator {
 
     private let ring = AudioRingBuffer()
     private let level = LevelBox()
+    private let gain = GainBox()
     private let capture: AudioCapture
     private let settings: Settings
     private let history: TranscriptionHistory
@@ -78,7 +79,8 @@ public final class DictationCoordinator {
     ) {
         self.settings = settings
         self.history = history
-        self.capture = AudioCapture(ring: ring, level: level)
+        self.capture = AudioCapture(ring: ring, level: level, gain: gain)
+        self.gain.set(Float(settings.inputGain))
         self.activeTier = settings.tier
         self.capture.onFailure = { [weak self] error in
             MainActor.assumeIsolated {
@@ -89,6 +91,29 @@ public final class DictationCoordinator {
 
     /// The flow bar polls this at 60 Hz rather than being pushed every buffer.
     public func currentLevel() -> Float { level.poll() }
+
+    /// Linear input gain. Takes effect on the next captured buffer, so it can be
+    /// moved while a hold is in progress and heard immediately.
+    public func setInputGain(_ value: Double) { gain.set(Float(value)) }
+    public var inputGain: Double { Double(gain.current) }
+
+    /// Run capture without a session, so the dashboard can show a live meter
+    /// while the user sets the gain. There is no recogniser attached and nothing
+    /// is transcribed; the ring is drained and discarded.
+    public func startLevelPreview() throws {
+        guard snapshot.state == .idle else { return }
+        ring.reset()
+        level.reset()
+        try capture.start()
+        Log.audio.info("Level preview started")
+    }
+
+    public func stopLevelPreview() {
+        guard snapshot.state == .idle else { return }
+        capture.stop()
+        ring.reset()
+        Log.audio.info("Level preview stopped")
+    }
 
     // MARK: - Model lifecycle
 

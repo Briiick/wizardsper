@@ -179,3 +179,48 @@ struct AudioRingBufferTests {
         #expect(read(ring, 4).isEmpty)
     }
 }
+
+@Suite("Input gain")
+struct GainBoxTests {
+
+    @Test("decibels round-trip to linear")
+    func decibelRoundTrip() {
+        for dB in [-12.0, -6.0, 0.0, 6.0, 12.0, 20.0, 30.0] {
+            let linear = GainBox.linear(fromDecibels: dB)
+            let back = GainBox.decibels(fromLinear: linear)
+            #expect(abs(back - dB) < 0.01, "\(dB) dB round-tripped to \(back)")
+        }
+        #expect(abs(GainBox.linear(fromDecibels: 0) - 1) < 1e-6)
+        #expect(abs(GainBox.linear(fromDecibels: 6) - 2) < 0.01)
+    }
+
+    /// The tap reads this value every buffer and multiplies by it. A NaN or an
+    /// absurd value there would not throw — it would silently turn every sample
+    /// into garbage the recogniser cannot decode.
+    @Test("out-of-range and non-finite gains are clamped, never stored raw")
+    func clampsHostileValues() {
+        #expect(GainBox.clamp(.nan) == 1)
+        #expect(GainBox.clamp(.infinity) == GainBox.maximum)
+        #expect(GainBox.clamp(-5) == GainBox.minimum)
+        #expect(GainBox.clamp(1_000_000) == GainBox.maximum)
+        #expect(GainBox.clamp(4) == 4)
+
+        let box = GainBox(.nan)
+        #expect(box.current == 1)
+        box.set(.infinity)
+        #expect(box.current == GainBox.maximum)
+    }
+
+    @Test("a fresh box is unity gain, so nothing changes until asked")
+    func defaultsToUnity() {
+        #expect(GainBox().current == 1)
+    }
+
+    @Test("the slider range covers a very quiet microphone")
+    func rangeIsUseful() {
+        // 30 dB is what a built-in array delivering ~0.005 RMS needs to reach
+        // the ~0.15 the recogniser expects.
+        #expect(GainBox.maximumDecibels >= 29)
+        #expect(GainBox.minimumDecibels <= -12)
+    }
+}

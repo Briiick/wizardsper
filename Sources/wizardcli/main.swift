@@ -1,4 +1,5 @@
 import CoreML
+import Accelerate
 import Foundation
 import WizardKit
 
@@ -189,14 +190,25 @@ func commandProbe(_ arguments: Arguments) async throws {
 
 @discardableResult
 func transcribe(
-    directory: URL, audio: URL, framing: FramingPolicy, realtime: Bool, verbose: Bool
-) async throws -> (text: String, seconds: Double, audioSeconds: Double) {
+    directory: URL, audio: URL, framing: FramingPolicy, realtime: Bool, verbose: Bool,
+    gain: Float = 1
+) async throws -> (text: String, seconds: Double, audioSeconds: Double, rms: Float) {
     let bundle = try await ModelBundle.load(from: directory)
     let asr = try StreamingASR(bundle: bundle, framing: framing)
     try await asr.warmUp()
 
-    let samples = try AudioFileLoader.samples(at: audio)
+    var samples = try AudioFileLoader.samples(at: audio)
     guard !samples.isEmpty else { throw WizardError.noAudioCaptured }
+    // Same scalar multiply the render-thread tap applies, so a gain measured
+    // here is the gain the app will actually deliver.
+    if gain != 1 {
+        var scale = GainBox.clamp(gain)
+        vDSP_vsmul(samples, 1, &scale, &samples, 1, vDSP_Length(samples.count))
+        var low: Float = -1, high: Float = 1
+        vDSP_vclip(samples, 1, &low, &high, &samples, 1, vDSP_Length(samples.count))
+    }
+    var rms: Float = 0
+    vDSP_rmsqv(samples, 1, &rms, vDSP_Length(samples.count))
     let audioSeconds = Double(samples.count) / Double(NemotronConfig.sampleRate)
 
     // Feed in the size the live capture path delivers, not one big buffer, so
@@ -217,7 +229,7 @@ func transcribe(
     }
     let text = try await asr.finish()
     let elapsed = Date().timeIntervalSince(started)
-    return (text, elapsed, audioSeconds)
+    return (text, elapsed, audioSeconds, rms)
 }
 
 func commandTranscribe(_ arguments: Arguments) async throws {
@@ -226,16 +238,17 @@ func commandTranscribe(_ arguments: Arguments) async throws {
     let directory = resolveModelDirectory(arguments)
     let framing = parseFraming(arguments.option("framing"))
 
+    let gain = Float(arguments.option("gain") ?? "1") ?? 1
     let result = try await transcribe(
         directory: directory, audio: audio, framing: framing,
-        realtime: arguments.has("realtime"), verbose: arguments.has("verbose"))
+        realtime: arguments.has("realtime"), verbose: arguments.has("verbose"), gain: gain)
 
     print("\n\(result.text)\n")
     let rtfx = result.audioSeconds / max(result.seconds, 0.0001)
     print(
         String(
-            format: "%.2f s audio in %.2f s  (%.1f× realtime)", result.audioSeconds, result.seconds,
-            rtfx))
+            format: "%.2f s audio in %.2f s  (%.1f× realtime), input RMS %.4f",
+            result.audioSeconds, result.seconds, rtfx, result.rms))
     if let reference = arguments.option("reference") {
         let scored = wordErrorRate(reference: reference, hypothesis: result.text)
         print(String(format: "WER %.2f%%  (%d edits over %d words)", scored.wer * 100, scored.edits, scored.words))

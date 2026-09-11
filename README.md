@@ -177,6 +177,31 @@ tensor, and the only symptom is a transcript that decays into noise. Every model
 output goes through `MLArrayReader`, which reads the real strides and takes a
 dense fast path only after confirming the strides actually are dense.
 
+### Input gain is not a quality knob
+
+The dashboard has a microphone gain slider, and it is deliberately paired with a
+live meter rather than offered on its own — because the control is not monotonic.
+Measured on one utterance against a constant noise floor, 560 ms tier:
+
+| signal level | no gain | 16× gain |
+|---|---|---|
+| normal | **0.00%** | 5.88% |
+| 10% | 0.00% | 0.00% |
+| 4% | 0.00% | 0.00% |
+| 2% | 23.53% | **5.88%** |
+| 1% | *empty transcript* | 88.24% |
+
+Scaling clean audio down barely matters: the model still scored 0.00% on speech
+attenuated to 4% of full scale, because the log-mel front end and the encoder's
+layer norms are indifferent to absolute level. What hurts is a weak *microphone*,
+which is a different thing — it scales the voice down against its own fixed noise
+floor, so SNR falls with the level, and that is where gain earns its place.
+
+Turn it up on a healthy signal and it clips, taking a perfect transcript to 5.88%.
+A slider with no feedback invites exactly that mistake, which is why
+`InputGainSection` draws the usable band behind the meter and says when the
+setting has gone too far in either direction.
+
 ### A harmless noise at load
 
 Every model load prints this to stderr, once:

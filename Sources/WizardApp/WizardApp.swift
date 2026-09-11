@@ -235,6 +235,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        dashboardModel.inputLevel = { [weak self] in self?.coordinator.currentLevel() ?? 0 }
+        dashboardModel.onStartLevelPreview = { [weak self] in
+            guard let self else { return }
+            do {
+                try self.coordinator.startLevelPreview()
+            } catch let error as WizardError {
+                self.dashboardModel.lastError = error.errorDescription ?? "Microphone unavailable"
+            } catch {
+                self.dashboardModel.lastError = error.localizedDescription
+            }
+        }
+        dashboardModel.onStopLevelPreview = { [weak self] in self?.coordinator.stopLevelPreview() }
         dashboardModel.onRevealInFinder = { tier in
             NSWorkspace.shared.activateFileViewerSelecting([WizardPaths.modelDirectory(for: tier)])
         }
@@ -440,6 +452,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // a download failure — would be swallowed as "no change".
             guard tier != self.coordinator.activeTier || !self.coordinator.isReady else { return }
             self.loadModel(tier)
+        }
+        observe { [weak self] in self?.settings.inputGain ?? 1 } onChange: { [weak self] gain in
+            // Straight through to the atomic the render thread reads, so the
+            // slider is audible on the very next buffer rather than on the next
+            // session.
+            self?.coordinator.setInputGain(gain)
         }
         observe { [weak self] in self?.settings.historyRetentionDays ?? 7 } onChange: {
             [weak self] days in
