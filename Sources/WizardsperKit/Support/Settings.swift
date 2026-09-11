@@ -42,6 +42,8 @@ public final class Settings {
 
     /// Deliver Cmd-V after copying. When off, every session ends as `.copied`.
     public var pasteAutomatically = true { didSet { persist(pasteAutomatically, Key.pasteAutomatically) } }
+    /// Pause whatever is playing for the duration of a hold, and put it back.
+    public var pausesPlayback = true { didSet { persist(pausesPlayback, Key.pausesPlayback) } }
     /// Put a space after the pasted text, so the next dictation does not weld
     /// itself to the end of this one.
     public var appendTrailingSpace = true { didSet { persist(appendTrailingSpace, Key.appendTrailingSpace) } }
@@ -87,6 +89,7 @@ public final class Settings {
         static let pasteAutomatically = "pasteAutomatically"
         static let restorePasteboard = "restorePasteboard"
         static let appendTrailingSpace = "appendTrailingSpace"
+        static let pausesPlayback = "pausesPlayback"
         static let showFlowBar = "showFlowBar"
         static let keepHistory = "keepHistory"
         static let historyRetentionDays = "historyRetentionDays"
@@ -123,6 +126,9 @@ public final class Settings {
         }
         if defaults.object(forKey: Key.appendTrailingSpace) != nil {
             appendTrailingSpace = defaults.bool(forKey: Key.appendTrailingSpace)
+        }
+        if defaults.object(forKey: Key.pausesPlayback) != nil {
+            pausesPlayback = defaults.bool(forKey: Key.pausesPlayback)
         }
         if defaults.object(forKey: Key.showFlowBar) != nil {
             showFlowBar = defaults.bool(forKey: Key.showFlowBar)

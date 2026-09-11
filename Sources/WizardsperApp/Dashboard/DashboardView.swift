@@ -184,6 +184,9 @@ struct DashboardView: View {
                 Toggle("Paste into the frontmost app", isOn: $settings.pasteAutomatically)
                 Toggle("Put the old clipboard back afterwards", isOn: $settings.restorePasteboard)
                     .disabled(!settings.pasteAutomatically)
+                Toggle("Pause what's playing while dictating", isOn: $settings.pausesPlayback)
+                    .help(
+                        "Only pauses if something is actually playing, and only resumes what it paused.")
                 Toggle("End with a space", isOn: $settings.appendTrailingSpace)
                     .help(
                         "Adds a space after the pasted text so the next dictation does not run into it.")

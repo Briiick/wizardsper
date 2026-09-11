@@ -44,6 +44,7 @@ public final class DictationCoordinator {
 
     private var asr: StreamingASR?
     private let cleaner = TranscriptCleaner()
+    private let pauser = MediaPauser()
 
     /// Why cleanup left the transcript alone, when it did. Surfaced rather than
     /// swallowed: a feature that silently does nothing is indistinguishable from
@@ -271,6 +272,11 @@ public final class DictationCoordinator {
         ring.reset()
         level.reset()
 
+        // Before the engine opens, so the pause and the first captured sample
+        // are as close together as they can be — anything still playing when
+        // capture starts ends up in the transcript.
+        if settings.pausesPlayback { pauser.pauseIfPlaying() }
+
         drain = Task { [weak self] in
             await self?.pump(id, asr: asr)
         }
@@ -480,8 +486,10 @@ public final class DictationCoordinator {
         // The single exit, so the only place guaranteed to run on every terminal
         // path. Stopping capture here is what stops a failure in the pump from
         // leaving the microphone open — and its orange indicator lit — for the
-        // rest of the process's life.
+        // rest of the process's life. The same argument applies to the music:
+        // a session that failed must still give it back.
         capture.stop()
+        pauser.resume()
         drain?.cancel()
         drain = nil
 

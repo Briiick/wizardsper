@@ -324,3 +324,48 @@ struct InterrogativeTests {
         #expect(!Character(",").isWordCharacter)
     }
 }
+
+@Suite("Media pausing", .serialized)
+@MainActor
+struct MediaPauserTests {
+
+    /// The bug this guards against would be genuinely obnoxious: hold the
+    /// dictation key in a quiet room and music starts playing. Nothing is sent
+    /// unless something is already audible.
+    @Test("silence is left alone")
+    func doesNotStartPlayback() {
+        let pauser = MediaPauser()
+        // Nothing is playing during a test run, so this must decline.
+        if !MediaPauser.isSomethingPlaying() {
+            #expect(!pauser.pauseIfPlaying())
+            #expect(!pauser.didPause)
+        }
+    }
+
+    /// And the mirror image: resuming audio the user paused themselves, before
+    /// they ever started dictating, would be the same bug pointed the other way.
+    @Test("resume does nothing unless we were the one who paused")
+    func resumeIsOwnershipChecked() {
+        let pauser = MediaPauser()
+        #expect(!pauser.didPause)
+        pauser.resume()
+        #expect(!pauser.didPause, "resume must not claim ownership it never had")
+    }
+
+    /// `finalize` is the single exit and calls `resume` on every terminal path,
+    /// including failures — so a double call has to be harmless.
+    @Test("resuming twice is harmless")
+    func resumeIsIdempotent() {
+        let pauser = MediaPauser()
+        pauser.resume()
+        pauser.resume()
+        #expect(!pauser.didPause)
+    }
+
+    /// Reads the default *output* device, so Wizardsper's own microphone capture
+    /// can never make it answer true.
+    @Test("the detector answers without throwing or hanging")
+    func detectorIsSafe() {
+        _ = MediaPauser.isSomethingPlaying()
+    }
+}
