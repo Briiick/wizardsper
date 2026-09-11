@@ -1,34 +1,37 @@
 import SwiftUI
 
-/// The live transcript, one line, with new words arriving rather than appearing.
+/// The live transcript: one line, laid out left to right, each word fading in
+/// where it belongs.
 ///
-/// A single `Text` whose string is replaced on every partial has two problems.
-/// The visible one is that it changes instantly — the line simply becomes
-/// different, which at the two-or-three-words-per-second a partial arrives reads
-/// as flicker. The invisible one is worse: left-aligned with tail truncation,
-/// the moment speech runs past the pill's width the *new* words are the ones cut
-/// off, so the bar freezes on the opening of the sentence and stops showing the
-/// user anything about what is happening now.
+/// A single `Text` whose string is replaced on every partial changes instantly,
+/// which at two or three partials a second reads as flicker. Words are drawn
+/// individually so a new one can fade in on its own while the words already on
+/// screen stay exactly where they are — nothing slides, nothing reflows.
 ///
-/// So the line is anchored to its trailing edge instead. It grows leftwards out
-/// of view, the way a teleprompter does, and each new word fades and slides in
-/// at the right. Older words are still there — they simply scroll off — which
-/// keeps the one thing a live meter has to do: show the most recent thing heard.
+/// Overflow is the part that needs care. Left-aligned with `.truncationMode`
+/// tail, the moment speech runs past the pill's width the *new* words are the
+/// ones cut off, so the bar freezes on the opening of the sentence and stops
+/// reporting what is happening now — the one job a live meter has. So the line
+/// is left-aligned while it fits, and only once it would overflow does it scroll
+/// to keep the newest word on screen. Short dictations never move at all.
 struct TranscriptFlowView: View {
 
     let text: String
     var color: Color = .primary
     var font: Font = .system(size: 13.5, weight: .medium, design: .rounded)
-    /// Placeholders ("Listening…") and outcome summaries are single units, not
-    /// speech, and should cross-fade whole rather than assemble word by word.
+    /// Placeholders ("Listening…") and outcome summaries are one thing being
+    /// said, not speech accumulating, so they cross-fade whole.
     var flowsWordByWord: Bool = true
     var reduceMotion: Bool = false
 
-    /// Split once per render. Index is a stable identity here because greedy
-    /// RNN-T only ever appends: a token that has been emitted is never revised,
-    /// so word *n* stays word *n*. The final word may grow as more sub-word
-    /// pieces arrive, and SwiftUI updates that one in place — which is exactly
-    /// the right behaviour, since a word being completed is not a new word.
+    @State private var contentWidth: CGFloat = 0
+    @State private var availableWidth: CGFloat = 0
+
+    /// Index is a stable identity here because greedy RNN-T only ever appends:
+    /// an emitted token is never revised, so word *n* stays word *n*. The final
+    /// word grows in place as more sub-word pieces arrive, which SwiftUI updates
+    /// without a transition — correct, since completing a word is not the same
+    /// as starting one.
     private var words: [Word] {
         text.split(separator: " ", omittingEmptySubsequences: true)
             .enumerated()
@@ -38,6 +41,19 @@ struct TranscriptFlowView: View {
     private struct Word: Identifiable, Equatable {
         let id: Int
         let text: String
+    }
+
+    private struct WidthKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+            value = max(value, nextValue())
+        }
+    }
+
+    /// Zero until the line is full; negative after that, by exactly the amount
+    /// that has run off the end.
+    private var scrollOffset: CGFloat {
+        min(0, availableWidth - contentWidth)
     }
 
     var body: some View {
@@ -54,42 +70,48 @@ struct TranscriptFlowView: View {
                     .transition(.opacity)
             }
         }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: text)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: text)
     }
 
     private var flowing: some View {
-        // `fixedSize` lets the row take its natural width and overflow; the
-        // leading `Spacer` pins that overflow to the left, so the trailing edge
-        // — the newest word — is the part that always stays on screen.
         HStack(spacing: 0) {
-            Spacer(minLength: 0)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 ForEach(words) { word in
                     Text(word.text)
                         .font(font)
                         .foregroundStyle(color)
                         .fixedSize()
-                        .transition(wordTransition)
+                        // Opacity only. A word that slides into place draws the
+                        // eye to the movement rather than to the word, and with
+                        // a partial arriving every few hundred milliseconds that
+                        // becomes the most distracting thing on screen.
+                        .transition(reduceMotion ? .identity : .opacity)
                 }
             }
             .fixedSize()
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: WidthKey.self, value: proxy.size.width)
+                }
+            )
+            .offset(x: scrollOffset)
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        // Without this the overflowing words draw over the level meter and past
-        // the capsule's edge.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { availableWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, width in availableWidth = width }
+            }
+        )
+        .onPreferenceChange(WidthKey.self) { width in
+            contentWidth = width
+        }
+        // Without this the overflow draws over the level meter and past the
+        // capsule's edge.
         .clipped()
         .accessibilityHidden(true)
-    }
-
-    /// In on the right, out on the left — the direction the line is travelling.
-    /// Removal matters even though words are never deleted mid-session: the
-    /// whole row is torn down when a session ends, and an unmatched removal
-    /// would pop rather than fade.
-    private var wordTransition: AnyTransition {
-        guard !reduceMotion else { return .identity }
-        return .asymmetric(
-            insertion: .offset(x: 14).combined(with: .opacity),
-            removal: .opacity)
     }
 }
 
@@ -99,7 +121,7 @@ struct TranscriptFlowView: View {
         TranscriptFlowView(text: "Hello")
         TranscriptFlowView(text: "Hello, can you hear me")
         TranscriptFlowView(
-            text: "But like he was gonna no, we always took our dude wives with us")
+            text: "But like he was gonna no, we always took our dude wives with us because that")
         TranscriptFlowView(text: "Listening…", color: .secondary, flowsWordByWord: false)
     }
     .frame(width: 360)
