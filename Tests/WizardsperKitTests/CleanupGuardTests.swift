@@ -280,3 +280,47 @@ struct CleanupDeterminismTests {
         #expect(!policy.enabled)
     }
 }
+
+@Suite("Interrogatives")
+struct InterrogativeTests {
+
+    /// The reason this table was extracted: the two private copies it replaced
+    /// had drifted, one listing "am" and the other not — so "am I late" was
+    /// punctuated as a question by `TranscriptPolish` and not recognised as one
+    /// by `CleanupGuard`. Both stages now answer the same way.
+    @Test("both stages agree on what opens a question")
+    func stagesAgree() {
+        for clause in ["am I late", "can you hear me", "what time is it", "did he go"] {
+            #expect(Interrogative.opens(clause), "not a question: \(clause)")
+            #expect(CleanupGuard.startsInterrogatively(clause))
+            #expect(TranscriptPolish.default.apply(to: clause).hasSuffix("?"))
+        }
+    }
+
+    @Test("statements are not questions")
+    func statementsAreNot() {
+        for clause in ["the meeting is at three", "we went home", "I asked what he wanted"] {
+            #expect(!Interrogative.opens(clause))
+            #expect(TranscriptPolish.default.apply(to: clause).hasSuffix("."))
+        }
+    }
+
+    @Test("leading punctuation and case do not matter")
+    func toleratesNoise() {
+        #expect(Interrogative.opens("  \"What time is it"))
+        #expect(Interrogative.opens("WHAT"))
+        #expect(!Interrogative.opens(""))
+        #expect(!Interrogative.opens("   "))
+    }
+
+    /// One predicate for what counts as part of a word, because three private
+    /// copies disagreed about digits.
+    @Test("digits and apostrophes are word characters")
+    func wordCharacters() {
+        #expect(Character("a").isWordCharacter)
+        #expect(Character("7").isWordCharacter)
+        #expect(Character("'").isWordCharacter)
+        #expect(!Character(" ").isWordCharacter)
+        #expect(!Character(",").isWordCharacter)
+    }
+}

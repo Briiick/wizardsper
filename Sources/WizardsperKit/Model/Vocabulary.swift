@@ -91,14 +91,21 @@ public struct Vocabulary: Codable, Sendable, Equatable {
 
         // Longest terms first: "Claude Code" must get the chance to claim both
         // words before "Claude" claims the first one and leaves "code" behind.
-        let ordered = terms.sorted { $0.wordCount > $1.wordCount }
+        //
+        // Each term's forms are normalised and keyed once here, not once per
+        // window. They depend only on the term, and the window loop below visits
+        // every word of the transcript — so this used to redo the same
+        // normalisation and the same phonetic key for a twenty-term list a
+        // hundred and fifty times per partial, twice a second, on the main actor.
+        let ordered = terms.sorted { $0.wordCount > $1.wordCount }.map(Prepared.init)
 
         for term in ordered {
-            let span = term.wordCount
+            let span = term.term.wordCount
             guard span > 0 else { continue }
             var index = 0
             while index + span <= tokens.count {
-                let window = Array(tokens[index..<(index + span)])
+                // A slice, not a copy: this runs once per word of the transcript.
+                let window = tokens[index..<(index + span)]
                 // A window that already contains a correction is left alone; a
                 // second term rewriting the first term's output would make the
                 // result depend on list order in a way no user could predict.
@@ -107,11 +114,11 @@ public struct Vocabulary: Codable, Sendable, Equatable {
                     continue
                 }
                 if matches(window: window, term: term) {
-                    tokens[index].core = term.replacement
+                    tokens[index].core = term.term.replacement
                     tokens[index].isCorrected = true
                     // Trailing punctuation of the *last* token in the window
                     // moves onto the replacement, so "cloud," becomes "Claude,".
-                    tokens[index].trailing = window[span - 1].trailing
+                    tokens[index].trailing = window[index + span - 1].trailing
                     if span > 1 {
                         tokens.removeSubrange((index + 1)..<(index + span))
                     }
@@ -127,32 +134,48 @@ public struct Vocabulary: Codable, Sendable, Equatable {
 
     // MARK: - Matching
 
-    private func matches(window: [Token], term: VocabularyTerm) -> Bool {
+    /// A term with its forms already normalised and keyed.
+    private struct Prepared {
+        let term: VocabularyTerm
+        /// Each form as `(normalised, phoneticKey)`, in match order.
+        let forms: [(normalised: String, phonetic: String)]
+
+        init(_ term: VocabularyTerm) {
+            self.term = term
+            self.forms = ([term.replacement] + term.aliases)
+                .map(Vocabulary.normalise)
+                .filter { !$0.isEmpty }
+                .map { ($0, Vocabulary.phoneticKey($0)) }
+        }
+    }
+
+    private func matches(window: ArraySlice<Token>, term: Prepared) -> Bool {
         let candidate = window.map(\.core).joined(separator: " ")
         let normalisedCandidate = Self.normalise(candidate)
         guard !normalisedCandidate.isEmpty else { return false }
 
         // Exact forms first, and they do not depend on `isFuzzy`: an alias the
         // user typed in is an instruction, not a guess.
-        for form in ([term.replacement] + term.aliases) {
-            if Self.normalise(form) == normalisedCandidate { return true }
-        }
-        guard term.isFuzzy else { return false }
+        for form in term.forms where form.normalised == normalisedCandidate { return true }
+        guard term.term.isFuzzy else { return false }
 
-        for form in ([term.replacement] + term.aliases) {
-            let normalisedForm = Self.normalise(form)
-            guard !normalisedForm.isEmpty else { continue }
+        let candidateKey = Self.phoneticKey(normalisedCandidate)
+        for (normalisedForm, formKey) in term.forms {
+            // Levenshtein cannot come in under the threshold when the lengths
+            // already differ by more than it, so this skips most of the work
+            // without changing any answer.
+            let longer = max(normalisedCandidate.count, normalisedForm.count)
+            let lengthGap = abs(normalisedCandidate.count - normalisedForm.count)
+            guard Double(lengthGap) <= Double(longer) * max(strictness, Self.confidentDistance)
+            else { continue }
+
             let distance = Self.normalisedDistance(normalisedCandidate, normalisedForm)
             if distance <= Self.confidentDistance { return true }
             // Beyond that, sounding alike is required as well. Edit distance on
             // its own at this range rewrites real words: "called" is close
             // enough to "Claude" to be tempting and is obviously not it, while
             // "cloud" is both close and homophonic.
-            if distance <= strictness,
-                Self.phoneticKey(normalisedCandidate) == Self.phoneticKey(normalisedForm)
-            {
-                return true
-            }
+            if distance <= strictness, candidateKey == formKey { return true }
         }
         return false
     }

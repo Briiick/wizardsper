@@ -65,10 +65,6 @@ public struct Chord: Hashable, Sendable, Codable {
         return order.filter(modifiers.contains).map(\.symbol).joined(separator: " ")
     }
 
-    /// The union of the chord's flag bits.
-    public var mask: CGEventFlags {
-        modifiers.reduce(into: CGEventFlags()) { $0.insert($1.flag) }
-    }
 
     /// True when every bound modifier is down in `flags`.
     ///

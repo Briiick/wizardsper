@@ -96,11 +96,6 @@ public final class LevelBox: @unchecked Sendable {
         return next
     }
 
-    /// The last value `poll()` produced, without advancing the decay. For code
-    /// that wants to read the meter without owning its cadence.
-    public var current: Float {
-        Float(bitPattern: envelope.load(ordering: .relaxed))
-    }
 
     /// Drop the envelope to silence. Called when a session ends so the next one
     /// does not open with the tail of the previous one's last syllable.

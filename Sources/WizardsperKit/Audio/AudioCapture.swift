@@ -111,15 +111,20 @@ public final class AudioCapture: @unchecked Sendable {
 
     // MARK: - Authorisation
 
-    public static var microphoneAuthorization: AVAuthorizationStatus {
-        AVCaptureDevice.authorizationStatus(for: .audio)
-    }
 
     /// Make sure Microphone access is granted, prompting once if macOS has never
     /// asked. Call this before `start()` — `start()` itself cannot prompt,
     /// because the prompt is asynchronous and the key is already down.
+    /// Prompt for the microphone if it has not been asked for yet.
+    ///
+    /// The status read and the request both live in `Permissions`, which is the
+    /// façade for all three TCC gates; this wraps them in the throwing shape the
+    /// capture path wants. It used to be a second copy of the same switch, and
+    /// the app delegate called this one at launch and `Permissions` from the
+    /// Grant button — so the same user action took a different path depending on
+    /// where it was clicked.
     public static func ensureMicrophoneAccess() async throws {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        switch await MainActor.run(body: { Permissions.microphoneAuthorization }) {
         case .authorized:
             return
         case .notDetermined:

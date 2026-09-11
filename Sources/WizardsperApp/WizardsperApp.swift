@@ -85,13 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // finished registering with the window server, and the prompt is
             // then dismissed out from under the user and reported as a denial.
             try? await Task.sleep(for: .milliseconds(600))
-            let before = AudioCapture.microphoneAuthorization.rawValue
+            let before = Permissions.microphoneAuthorization.rawValue
             Log.audio.info("Microphone authorisation before request: \(before, privacy: .public)")
             do {
                 try await AudioCapture.ensureMicrophoneAccess()
                 Log.audio.info("Microphone authorised")
-            } catch let error as WizardsperError {
-                self.status.statusText = error.errorDescription ?? "Microphone unavailable"
             } catch {
                 self.status.statusText = error.localizedDescription
             }
@@ -241,8 +239,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             do {
                 try self.coordinator.startLevelPreview()
-            } catch let error as WizardsperError {
-                self.dashboardModel.lastError = error.errorDescription ?? "Microphone unavailable"
             } catch {
                 self.dashboardModel.lastError = error.localizedDescription
             }
@@ -251,7 +247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dashboardModel.onRevealInFinder = { tier in
             NSWorkspace.shared.activateFileViewerSelecting([WizardsperPaths.modelDirectory(for: tier)])
         }
-        refreshModelStatus()
+        // Deliberately not refreshed here. Probing every tier is ~70 filesystem
+        // stats and sizing one is a recursive walk of 615 MB, and nothing it
+        // feeds is visible until the dashboard opens — which refreshes it
+        // itself. Doing it at launch put all of that on the main actor during
+        // `applicationDidFinishLaunching`, with a cold page cache.
     }
 
     private func openDashboard() {
@@ -277,15 +277,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkey = monitor
             Log.ui.info("Watching for \(self.settings.chord.display, privacy: .public)")
             refreshReadiness()
-        } catch let error as WizardsperError {
-            hotkey = nil
-            status.isReady = false
-            status.statusText = error.errorDescription ?? "Cannot watch the keyboard"
-            Log.ui.error("Hotkey tap failed: \(self.status.statusText, privacy: .public)")
         } catch {
             hotkey = nil
             status.isReady = false
             status.statusText = error.localizedDescription
+            Log.ui.error("Hotkey tap failed: \(self.status.statusText, privacy: .public)")
         }
     }
 
@@ -407,19 +403,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshModelStatus() {
         let tier = settings.tier
         Task { @MainActor in
-            var present: Set<NemotronTier> = []
-            for candidate in NemotronTier.allCases
-            where await ModelInstaller.shared.isInstalled(candidate) {
-                present.insert(candidate)
+            // The four probes are independent; running them in a group turns
+            // four sequential actor round-trips into one.
+            let present = await withTaskGroup(of: (NemotronTier, Bool).self) { group in
+                for candidate in NemotronTier.allCases {
+                    group.addTask { (candidate, await ModelInstaller.shared.isInstalled(candidate)) }
+                }
+                var installed: Set<NemotronTier> = []
+                for await (candidate, isInstalled) in group where isInstalled {
+                    installed.insert(candidate)
+                }
+                return installed
             }
             self.dashboardModel.installedTiers = present
-            self.dashboardModel.isInstalled = present.contains(tier)
-            self.dashboardModel.sizeOnDisk = Self.directorySize(
-                WizardsperPaths.modelDirectory(for: tier))
+            // Off the main actor: this walks every file in the tier.
+            let directory = WizardsperPaths.modelDirectory(for: tier)
+            self.dashboardModel.sizeOnDisk = await Task.detached {
+                Self.directorySize(directory)
+            }.value
         }
     }
 
-    private static func directorySize(_ url: URL) -> Int64? {
+    nonisolated private static func directorySize(_ url: URL) -> Int64? {
         guard
             let enumerator = FileManager.default.enumerator(
                 at: url, includingPropertiesForKeys: [.fileSizeKey], options: [])

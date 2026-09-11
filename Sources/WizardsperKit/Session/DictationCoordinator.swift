@@ -45,9 +45,6 @@ public final class DictationCoordinator {
     private var asr: StreamingASR?
     private let cleaner = TranscriptCleaner()
 
-    /// The transcript exactly as the recogniser produced it, before cleanup.
-    /// Kept so the rewrite is never the only copy of what the user said.
-    public private(set) var lastRawTranscript: String?
     /// Why cleanup left the transcript alone, when it did. Surfaced rather than
     /// swallowed: a feature that silently does nothing is indistinguishable from
     /// one that is broken.
@@ -172,14 +169,12 @@ public final class DictationCoordinator {
             self.isReady = true
             self.statusText = "Ready"
             Log.session.info("Loaded \(tier.rawValue, privacy: .public) ms tier")
-        } catch let error as WizardsperError {
-            guard generation == loadGeneration else { return }
-            self.asr = nil
-            self.statusText = error.errorDescription ?? "Model failed to load"
-            Log.session.error("Model load failed: \(self.statusText, privacy: .public)")
         } catch {
             guard generation == loadGeneration else { return }
             self.asr = nil
+            // `WizardsperError` is a `LocalizedError`, so Foundation already
+            // routes its description through `localizedDescription` — the second
+            // catch arm this replaces was unreachable.
             self.statusText = error.localizedDescription
             Log.session.error("Model load failed: \(self.statusText, privacy: .public)")
         }
@@ -299,11 +294,8 @@ public final class DictationCoordinator {
         // transcript glued to the front of it.
         do {
             try await asr.reset()
-        } catch let error as WizardsperError {
-            finalize(.failed(error), for: id)
-            return
         } catch {
-            finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
+            finalize(.failed(.wrapping(error)), for: id)
             return
         }
         guard sessionID == id else { return }
@@ -312,11 +304,8 @@ public final class DictationCoordinator {
         // the event-tap callback's turn of the run loop.
         do {
             try capture.start()
-        } catch let error as WizardsperError {
-            finalize(.failed(error), for: id)
-            return
         } catch {
-            finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
+            finalize(.failed(.wrapping(error)), for: id)
             return
         }
         guard sessionID == id else {
@@ -343,13 +332,9 @@ public final class DictationCoordinator {
                 // would make the user doubt one or the other. `apply` is
                 // idempotent, so running it on every partial is safe.
                 if let partial { snapshot.transcript = settings.vocabulary.apply(to: partial) }
-            } catch let error as WizardsperError {
-                guard sessionID == id else { return }
-                finalize(.failed(error), for: id)
-                return
             } catch {
                 guard sessionID == id else { return }
-                finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
+                finalize(.failed(.wrapping(error)), for: id)
                 return
             }
         }
@@ -410,13 +395,9 @@ public final class DictationCoordinator {
             // last word, and it is the polished text that gets the full stop.
             let raw = try await asr.finish()
             transcript = settings.polish.apply(to: settings.vocabulary.apply(to: raw))
-        } catch let error as WizardsperError {
-            guard sessionID == id else { return }
-            finalize(.failed(error), for: id)
-            return
         } catch {
             guard sessionID == id else { return }
-            finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
+            finalize(.failed(.wrapping(error)), for: id)
             return
         }
         guard sessionID == id else { return }
@@ -447,7 +428,6 @@ public final class DictationCoordinator {
             return
         }
 
-        lastRawTranscript = transcript
         lastCleanupNote = nil
 
         // Cleanup runs here and only here: on the finished transcript, never on

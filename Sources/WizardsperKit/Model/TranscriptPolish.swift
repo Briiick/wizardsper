@@ -37,13 +37,6 @@ public struct TranscriptPolish: Sendable, Equatable, Codable {
     /// Marks that already end a sentence, so nothing is added after them.
     private static let terminals: Set<Character> = [".", "!", "?", "…", ":", ";", "—", "-", ","]
 
-    /// Words that start a question. Checked against the final clause, because
-    /// "I asked what he wanted" is not a question and "what did he want" is.
-    private static let interrogatives: Set<String> = [
-        "who", "what", "where", "when", "why", "how", "which", "whose", "whom",
-        "is", "are", "was", "were", "am", "do", "does", "did", "can", "could",
-        "will", "would", "should", "shall", "have", "has", "had", "may", "might",
-    ]
 
     public func apply(to text: String) -> String {
         var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -82,14 +75,8 @@ public struct TranscriptPolish: Sendable, Equatable, Codable {
     /// any terminal punctuation at all, was the actual complaint.
     static func terminalMark(for text: String) -> Character {
         let clause = text.split(whereSeparator: { ".!?…;:".contains($0) }).last ?? Substring(text)
-        let words =
-            clause
-            .lowercased()
-            .split(whereSeparator: { !$0.isLetter && $0 != "'" })
-            .map(String.init)
-        guard let first = words.first else { return "." }
-        // "Can you hear me" is a question; "can openers are useful" is not, but a
-        // dictation opening with a bare auxiliary is overwhelmingly the former.
-        return interrogatives.contains(first) ? "?" : "."
+        // "Can you hear me" is a question; "can openers are useful" is not, but
+        // a dictation opening with a bare auxiliary is overwhelmingly the former.
+        return Interrogative.opens(clause) ? "?" : "."
     }
 }

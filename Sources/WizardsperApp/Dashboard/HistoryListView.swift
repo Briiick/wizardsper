@@ -16,25 +16,28 @@ private struct HistoryEntry: Identifiable, Hashable {
     /// `TranscriptionRecord.Outcome.pasted` or `.copied` — a bare string in the
     /// record so an unknown value from a newer build still decodes.
     let outcome: String
-    let wordCount: Int
     let durationSeconds: Double
 
+    /// Computed where it is drawn, not where the entry is built: the list maps
+    /// every record on every keystroke in the search field, and only the visible
+    /// rows ever show this.
+    var words: Int { text.split(whereSeparator: \.isWhitespace).count }
+
     init(
-        id: UUID, date: Date, text: String, outcome: String, wordCount: Int,
+        id: UUID, date: Date, text: String, outcome: String,
         durationSeconds: Double
     ) {
         self.id = id
         self.date = date
         self.text = text
         self.outcome = outcome
-        self.wordCount = wordCount
         self.durationSeconds = durationSeconds
     }
 
     init(_ record: TranscriptionRecord) {
         self.init(
             id: record.id, date: record.date, text: record.text, outcome: record.outcome,
-            wordCount: record.wordCount, durationSeconds: record.durationSeconds)
+            durationSeconds: record.durationSeconds)
     }
 }
 
@@ -67,8 +70,16 @@ struct HistoryListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
+        // `days` is derived from every record — a map, a filter, a grouping and
+        // two sorts. Calling it once and passing it down matters because `query`
+        // is `@State`: the body runs on every keystroke, and reading the property
+        // twice (here and in `list`) did all of that work twice per character.
+        let entries = allEntries
+        let days = Self.grouped(Self.matching(entries, query: query))
+        let isEmpty = entries.isEmpty
+
+        return VStack(spacing: 0) {
+            toolbar(isEmpty: isEmpty)
             Divider()
             if let banner = bannerMessage {
                 bannerRow(banner)
@@ -77,7 +88,7 @@ struct HistoryListView: View {
             if days.isEmpty {
                 emptyState
             } else {
-                list
+                list(days)
             }
         }
         .confirmationDialog(
@@ -94,7 +105,7 @@ struct HistoryListView: View {
 
     // MARK: - Toolbar
 
-    private var toolbar: some View {
+    private func toolbar(isEmpty: Bool) -> some View {
         HStack(spacing: 10) {
             searchField
             Spacer(minLength: 8)
@@ -104,14 +115,14 @@ struct HistoryListView: View {
                 Label("Export…", systemImage: "square.and.arrow.up")
             }
             .help("Save the whole history as plain text — the search filter does not narrow it.")
-            .disabled(allEntries.isEmpty)
+            .disabled(isEmpty)
 
             Button(role: .destructive) {
                 confirmingClear = true
             } label: {
                 Label("Clear All", systemImage: "trash")
             }
-            .disabled(allEntries.isEmpty)
+            .disabled(isEmpty)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
@@ -179,7 +190,7 @@ struct HistoryListView: View {
 
     // MARK: - List
 
-    private var list: some View {
+    private func list(_ days: [HistoryDay]) -> some View {
         List {
             ForEach(days) { day in
                 Section {
@@ -219,7 +230,7 @@ struct HistoryListView: View {
                 HStack(spacing: 6) {
                     Text(relative(entry.date))
                     Text("·")
-                    Text(entry.wordCount == 1 ? "1 word" : "\(entry.wordCount) words")
+                    Text(entry.words == 1 ? "1 word" : "\(entry.words) words")
                     if entry.durationSeconds > 0 {
                         Text("·")
                         Text(String(format: "%.1f s", entry.durationSeconds))
@@ -284,20 +295,18 @@ struct HistoryListView: View {
         sampleEntries ?? TranscriptionHistory.shared.records.map { HistoryEntry($0) }
     }
 
-    private var filtered: [HistoryEntry] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return allEntries }
-        return allEntries.filter { $0.text.localizedCaseInsensitiveContains(trimmed) }
+    private static func matching(_ entries: [HistoryEntry], query: String) -> [HistoryEntry] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return entries }
+        return entries.filter { $0.text.localizedCaseInsensitiveContains(trimmed) }
     }
 
     /// Newest day first, and newest entry first inside each day. The store
     /// already publishes newest-first; the sort here keeps the grouping honest
     /// if a back-dated record ever lands out of order.
-    private var days: [HistoryDay] {
+    private static func grouped(_ entries: [HistoryEntry]) -> [HistoryDay] {
         let calendar = Calendar.current
-        let grouped = Dictionary(grouping: filtered) { calendar.startOfDay(for: $0.date) }
-        return
-            grouped
+        return Dictionary(grouping: entries) { calendar.startOfDay(for: $0.date) }
             .map { HistoryDay(id: $0.key, entries: $0.value.sorted { $0.date > $1.date }) }
             .sorted { $0.id > $1.id }
     }
@@ -382,19 +391,19 @@ private func previewEntries() -> [HistoryEntry] {
             id: UUID(), date: now.addingTimeInterval(-240),
             text:
                 "The encoder runs on the Neural Engine, so the first hold of a session is slower than every one after it.",
-            outcome: "pasted", wordCount: 21, durationSeconds: 6.4),
+            outcome: "pasted", durationSeconds: 6.4),
         HistoryEntry(
             id: UUID(), date: now.addingTimeInterval(-3_400),
             text: "Remember to check whether the 160 ms tier still exists on the hub.",
-            outcome: "copied", wordCount: 13, durationSeconds: 3.1),
+            outcome: "copied", durationSeconds: 3.1),
         HistoryEntry(
             id: UUID(), date: now.addingTimeInterval(-92_000),
             text: "Draft the release notes before Thursday.",
-            outcome: "pasted", wordCount: 6, durationSeconds: 1.8),
+            outcome: "pasted", durationSeconds: 1.8),
         HistoryEntry(
             id: UUID(), date: now.addingTimeInterval(-96_000),
             text: "Ask about the 2240 ms tier's word error rate regression.",
-            outcome: "copied", wordCount: 10, durationSeconds: 2.6),
+            outcome: "copied", durationSeconds: 2.6),
     ]
 }
 

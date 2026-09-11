@@ -40,7 +40,17 @@ enum WizardsperIcon {
     /// Template so macOS tints it — black on a light menu bar, white on a dark
     /// one, inverted while the item is selected. The icon itself must therefore
     /// carry no colour; only its alpha channel survives.
+    /// Built once each. The two images depend on nothing but the flag, and
+    /// `refreshIcon()` asks for one on every state change — twice per dictation,
+    /// in the same run-loop turn that is starting the audio engine.
+    private static let idle = render(listening: false)
+    private static let live = render(listening: true)
+
     static func image(listening: Bool) -> NSImage {
+        listening ? live : idle
+    }
+
+    private static func render(listening: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
             NSColor.black.setFill()
             NSColor.black.setStroke()

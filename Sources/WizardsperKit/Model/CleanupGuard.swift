@@ -86,9 +86,7 @@ public struct CleanupGuard: Sendable, Equatable {
     // MARK: - Pieces
 
     static func words(_ text: String) -> [String] {
-        text.lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "'" })
-            .map(String.init)
+        text.lowercased().split(whereSeparator: { !$0.isWordCharacter }).map(String.init)
     }
 
     /// Size of the multiset intersection.
@@ -117,14 +115,8 @@ public struct CleanupGuard: Sendable, Equatable {
         return !rewritten.contains("?")
     }
 
-    private static let interrogatives: Set<String> = [
-        "who", "what", "where", "when", "why", "how", "which", "whose", "whom",
-        "is", "are", "was", "were", "do", "does", "did", "can", "could", "will",
-        "would", "should", "shall", "have", "has", "had", "may", "might",
-    ]
 
     static func startsInterrogatively(_ text: String) -> Bool {
-        guard let first = words(text).first else { return false }
-        return interrogatives.contains(first)
+        Interrogative.opens(text)
     }
 }

@@ -3,9 +3,8 @@ import Observation
 
 /// User-visible preferences, persisted to `UserDefaults` on every mutation.
 ///
-/// Main-actor isolated because the dashboard binds directly to it; the
-/// coordinator reads a `Snapshot` so nothing off the main actor touches this
-/// object.
+/// Main-actor isolated because the dashboard binds directly to it, and every
+/// reader — the coordinator included — is itself on the main actor.
 @MainActor
 @Observable
 public final class Settings {
@@ -14,29 +13,52 @@ public final class Settings {
     private let defaults: UserDefaults
     private var loaded = false
 
-    public var chord: Chord = .fn { didSet { persist() } }
-    public var tier: NemotronTier = .default { didSet { persist() } }
-    public var framing: FramingPolicy = .default { didSet { persist() } }
+    /// Writes one key, not all fifteen. `persist()` used to re-encode every
+    /// setting on every mutation, so dragging a slider re-serialised the entire
+    /// vocabulary list on each frame of the drag.
+    private func persist<T>(_ value: T, _ key: String) where T: Encodable {
+        guard loaded else { return }
+        defaults.set(try? JSONEncoder().encode(value), forKey: key)
+    }
+
+    private func persist(_ value: Bool, _ key: String) {
+        guard loaded else { return }
+        defaults.set(value, forKey: key)
+    }
+
+    private func persist(_ value: Int, _ key: String) {
+        guard loaded else { return }
+        defaults.set(value, forKey: key)
+    }
+
+    private func persist(_ value: Double, _ key: String) {
+        guard loaded else { return }
+        defaults.set(value, forKey: key)
+    }
+
+    public var chord: Chord = .fn { didSet { persist(chord, Key.chord) } }
+    public var tier: NemotronTier = .default { didSet { if loaded { defaults.set(tier.rawValue, forKey: Key.tier) } } }
+    public var framing: FramingPolicy = .default { didSet { persist(framing, Key.framing) } }
 
     /// Deliver Cmd-V after copying. When off, every session ends as `.copied`.
-    public var pasteAutomatically = true { didSet { persist() } }
+    public var pasteAutomatically = true { didSet { persist(pasteAutomatically, Key.pasteAutomatically) } }
     /// Put a space after the pasted text, so the next dictation does not weld
     /// itself to the end of this one.
-    public var appendTrailingSpace = true { didSet { persist() } }
+    public var appendTrailingSpace = true { didSet { persist(appendTrailingSpace, Key.appendTrailingSpace) } }
     /// Restore whatever was on the pasteboard before the paste.
-    public var restorePasteboard = true { didSet { persist() } }
-    public var showFlowBar = true { didSet { persist() } }
-    public var keepHistory = true { didSet { persist() } }
-    public var historyRetentionDays = 7 { didSet { persist() } }
+    public var restorePasteboard = true { didSet { persist(restorePasteboard, Key.restorePasteboard) } }
+    public var showFlowBar = true { didSet { persist(showFlowBar, Key.showFlowBar) } }
+    public var keepHistory = true { didSet { persist(keepHistory, Key.keepHistory) } }
+    public var historyRetentionDays = 7 { didSet { persist(historyRetentionDays, Key.historyRetentionDays) } }
     /// Rewrite finished transcripts with the on-device language model.
-    public var cleanup = CleanupPolicy.default { didSet { persist() } }
+    public var cleanup = CleanupPolicy.default { didSet { persist(cleanup, Key.cleanup) } }
 
     /// Small certain corrections: finish the sentence, capitalise the start.
-    public var polish = TranscriptPolish.default { didSet { persist() } }
+    public var polish = TranscriptPolish.default { didSet { persist(polish, Key.polish) } }
 
     /// Words the recogniser cannot produce, and what to write instead.
     /// See `Vocabulary`.
-    public var vocabulary = Vocabulary.starter { didSet { persist() } }
+    public var vocabulary = Vocabulary.starter { didSet { persist(vocabulary, Key.vocabulary) } }
 
     /// Linear input gain applied to captured audio before recognition.
     ///
@@ -44,39 +66,13 @@ public final class Settings {
     /// than an order of magnitude in the level they deliver for the same voice,
     /// and speech that arrives too quiet decodes to blanks rather than to a bad
     /// transcript. See `GainBox`.
-    public var inputGain: Double = 1 { didSet { persist() } }
+    public var inputGain: Double = 1 { didSet { persist(inputGain, Key.inputGain) } }
     /// Holds shorter than this are treated as an accidental tap and produce
     /// `.nothing` rather than a transcript.
-    public var minimumHoldSeconds = 0.25 { didSet { persist() } }
-    public var launchAtLogin = false { didSet { persist() } }
+    public var minimumHoldSeconds = 0.25 { didSet { persist(minimumHoldSeconds, Key.minimumHoldSeconds) } }
+    public var launchAtLogin = false { didSet { persist(launchAtLogin, Key.launchAtLogin) } }
 
-    /// An immutable copy safe to hand to a background actor.
-    public struct Snapshot: Sendable, Equatable {
-        public var chord: Chord
-        public var tier: NemotronTier
-        public var framing: FramingPolicy
-        public var pasteAutomatically: Bool
-        public var restorePasteboard: Bool
-        public var appendTrailingSpace: Bool
-        public var showFlowBar: Bool
-        public var keepHistory: Bool
-        public var historyRetentionDays: Int
-        public var minimumHoldSeconds: Double
-        public var inputGain: Double
-        public var vocabulary: Vocabulary
-        public var polish: TranscriptPolish
-        public var cleanup: CleanupPolicy
-    }
 
-    public var snapshot: Snapshot {
-        Snapshot(
-            chord: chord, tier: tier, framing: framing,
-            pasteAutomatically: pasteAutomatically, restorePasteboard: restorePasteboard,
-            appendTrailingSpace: appendTrailingSpace,
-            showFlowBar: showFlowBar, keepHistory: keepHistory,
-            historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds,
-            inputGain: inputGain, vocabulary: vocabulary, polish: polish, cleanup: cleanup)
-    }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -163,25 +159,6 @@ public final class Settings {
         }
     }
 
-    private func persist() {
-        guard loaded else { return }
-        let encoder = JSONEncoder()
-        defaults.set(try? encoder.encode(chord), forKey: Key.chord)
-        defaults.set(tier.rawValue, forKey: Key.tier)
-        defaults.set(try? encoder.encode(framing), forKey: Key.framing)
-        defaults.set(pasteAutomatically, forKey: Key.pasteAutomatically)
-        defaults.set(restorePasteboard, forKey: Key.restorePasteboard)
-        defaults.set(appendTrailingSpace, forKey: Key.appendTrailingSpace)
-        defaults.set(showFlowBar, forKey: Key.showFlowBar)
-        defaults.set(keepHistory, forKey: Key.keepHistory)
-        defaults.set(historyRetentionDays, forKey: Key.historyRetentionDays)
-        defaults.set(minimumHoldSeconds, forKey: Key.minimumHoldSeconds)
-        defaults.set(launchAtLogin, forKey: Key.launchAtLogin)
-        defaults.set(inputGain, forKey: Key.inputGain)
-        defaults.set(try? encoder.encode(vocabulary), forKey: Key.vocabulary)
-        defaults.set(try? encoder.encode(polish), forKey: Key.polish)
-        defaults.set(try? encoder.encode(cleanup), forKey: Key.cleanup)
-    }
 }
 
 /// Canonical on-disk locations.

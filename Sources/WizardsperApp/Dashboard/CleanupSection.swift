@@ -18,6 +18,23 @@ struct CleanupSection: View {
 
     var body: some View {
         Section {
+            // These two were a persisted, tested, `Codable` preference with no
+            // way to reach them — the recogniser never terminates its last
+            // sentence, so they are on for everyone, and until now nobody could
+            // turn them off.
+            Toggle("Finish the sentence", isOn: $settings.polish.addsTerminalPunctuation)
+                .help(
+                    "The recogniser punctuates mid-sentence but never ends one, because it only emits a final mark when it hears the next sentence begin."
+                )
+            Toggle("Capitalise the first word", isOn: $settings.polish.capitalisesFirstWord)
+                .help("Left alone for words that are deliberately lowercase, like iPhone.")
+        } header: {
+            Text("Tidying")
+        } footer: {
+            Text("Two fixed corrections, applied to every transcript. No model involved.")
+        }
+
+        Section {
             Toggle("Rewrite transcripts into written English", isOn: $settings.cleanup.enabled)
                 .disabled(!availability.isReady)
 

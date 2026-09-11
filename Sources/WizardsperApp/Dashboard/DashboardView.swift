@@ -30,8 +30,6 @@ final class DashboardModel {
     /// 615 MB download before the user commits to one.
     var installedTiers: Set<NemotronTier> = []
 
-    /// Whether the *active* tier is installed.
-    var isInstalled = false
 
     /// Bytes the active tier occupies, or `nil` when it is not installed.
     var sizeOnDisk: Int64?
@@ -469,7 +467,7 @@ struct DashboardView: View {
     }
 
     private var statusPill: some View {
-        let installed = model.isInstalled
+        let installed = model.installedTiers.contains(settings.tier)
         return Text(installed ? "Installed" : "Not installed")
             .font(.system(size: 11, weight: .medium))
             .padding(.horizontal, 8)
@@ -502,7 +500,7 @@ struct DashboardView: View {
         HStack(spacing: 10) {
             if model.progress != nil {
                 Button("Cancel") { model.onCancel() }
-            } else if model.isInstalled {
+            } else if model.installedTiers.contains(settings.tier) {
                 Button {
                     model.onRemove(settings.tier)
                 } label: {
@@ -529,7 +527,7 @@ struct DashboardView: View {
             } label: {
                 Label("Reveal in Finder", systemImage: "folder")
             }
-            .disabled(!model.isInstalled)
+            .disabled(!model.installedTiers.contains(settings.tier))
 
             Spacer(minLength: 0)
         }
@@ -565,7 +563,6 @@ extension WizardsperKit.Settings {
 extension DashboardModel {
     fileprivate static func previewModel() -> DashboardModel {
         let model = DashboardModel()
-        model.isInstalled = true
         model.installedTiers = [.ms560]
         model.phaseText = "Installed and verified."
         model.sizeOnDisk = 628_144_000

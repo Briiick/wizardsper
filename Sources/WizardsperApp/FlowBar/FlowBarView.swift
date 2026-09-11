@@ -134,7 +134,7 @@ struct FlowBarView: View {
                 .foregroundStyle(accentColor)
                 .frame(width: LevelBarsView.clusterWidth, height: LevelBarsView.maxBarHeight)
         } else {
-            LevelBarsView(level: model.level, tint: accentColor)
+            LiveLevelBars(model: model, tint: accentColor)
         }
     }
 
@@ -178,6 +178,26 @@ struct FlowBarView: View {
         case .nothing: return "mic.slash"
         case .failed: return "exclamationmark.triangle"
         }
+    }
+}
+
+/// Reads `model.level` — and nothing else — so the 60 Hz meter invalidates only
+/// this view.
+///
+/// It used to be a `LevelBarsView(level: model.level)` written inline in
+/// `FlowBarView.body`, which looks equivalent and is not: with `@Observable`,
+/// touching `model.level` in that body makes the *whole pill* a dependency of a
+/// property that changes sixty times a second. The transcript subtree was being
+/// rebuilt — words re-split, `ForEach` re-diffed, every word re-measured by
+/// `WordFlowLayout` — on every meter tick, when the text it draws changes about
+/// twice a second. Pulling the read into its own view is what confines the
+/// invalidation to the bars.
+private struct LiveLevelBars: View {
+    let model: FlowBarModel
+    var tint: Color
+
+    var body: some View {
+        LevelBarsView(level: model.level, tint: tint)
     }
 }
 

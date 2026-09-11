@@ -87,19 +87,8 @@ public actor StreamingASR {
     private var decoderOut: MLMultiArray?
 
     private var tokenIDs: [Int] = []
-    private var timings: [TokenTiming] = []
-    /// Snapshot taken by `finish()` before it clears `timings`.
-    private var finishedTimings: [TokenTiming] = []
-    private var frameBase = 0
     public private(set) var processedChunks = 0
 
-    /// One decoded token and the encoder frame it was emitted on.
-    public struct TokenTiming: Sendable, Equatable {
-        public let tokenID: Int
-        public let piece: String
-        public let start: Double
-        public let end: Double
-    }
 
     // MARK: - Init
 
@@ -178,9 +167,6 @@ public actor StreamingASR {
         lastToken = Int32(config.blankIndex)
         decoderOut = nil
         tokenIDs.removeAll(keepingCapacity: true)
-        timings.removeAll(keepingCapacity: true)
-        finishedTimings.removeAll(keepingCapacity: true)
-        frameBase = 0
         processedChunks = 0
     }
 
@@ -259,20 +245,15 @@ public actor StreamingASR {
         // have its next transcript silently prefixed with this one — a failure
         // that looks like the recogniser hallucinating rather than like missing
         // bookkeeping. The encoder caches and LSTM state still need reset().
-        finishedTimings = timings
         tokenIDs.removeAll(keepingCapacity: true)
-        timings.removeAll(keepingCapacity: true)
         return transcript
     }
 
-    /// Token timings for the utterance the last `finish()` returned.
-    public var lastFinishedTimings: [TokenTiming] { finishedTimings }
 
     public var partialTranscript: String {
         bundle.tokenizer.decode(tokenIDs)
     }
 
-    public var tokenTimings: [TokenTiming] { timings }
 
     private func advanceWindow() {
         window.removeFirst(min(config.chunkSamples, window.count))
@@ -361,7 +342,6 @@ public actor StreamingASR {
         let mels = config.melFeatures
         let cacheFrames = config.preEncodeCache
         let chunkFrames = config.chunkMelFrames
-        let totalFrames = config.totalMelFrames
         let offset = framing.frameOffset
         let produced = emittedFrames
 
@@ -385,7 +365,6 @@ public actor StreamingASR {
                             row[(cacheFrames + t) * timeStride] = chunkRow[t]
                         }
                     }
-                    _ = totalFrames
                 }
             }
         }
@@ -474,19 +453,12 @@ public actor StreamingASR {
 
                 newTokens.append(token)
                 tokenIDs.append(token)
-                let start = Double(frameBase + frame) * config.secondsPerEncoderFrame
-                timings.append(
-                    TokenTiming(
-                        tokenID: token, piece: bundle.tokenizer.piece(token),
-                        start: start, end: start + config.secondsPerEncoderFrame))
-
                 lastToken = Int32(token)
                 try advanceDecoder(to: lastToken)
                 symbols += 1
             }
         }
 
-        frameBase += frames
         return newTokens
     }
 

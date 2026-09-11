@@ -17,8 +17,17 @@ public enum WizardsperError: LocalizedError, Sendable {
     case accessibilityDenied
     case audioEngineFailed(String)
     case noAudioCaptured
-    case transcriptEmpty
     case pasteFailed(String)
+
+    /// Coerce any error into this type.
+    ///
+    /// Eight places used to write the same two-armed catch — one arm for a
+    /// `WizardsperError`, one wrapping anything else — and the arms had started
+    /// to differ in what they did afterwards. One coercion means the catch is a
+    /// single clause and the difference cannot creep back.
+    public static func wrapping(_ error: any Error) -> WizardsperError {
+        (error as? WizardsperError) ?? .audioEngineFailed(error.localizedDescription)
+    }
 
     public var errorDescription: String? {
         switch self {
@@ -46,8 +55,6 @@ public enum WizardsperError: LocalizedError, Sendable {
             return "Audio capture failed: \(detail)"
         case .noAudioCaptured:
             return "No audio was captured."
-        case .transcriptEmpty:
-            return "Nothing was said."
         case .pasteFailed(let detail):
             return "Could not paste: \(detail)"
         }

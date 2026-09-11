@@ -42,14 +42,6 @@ public enum PermissionKind: String, CaseIterable, Sendable, Identifiable, Codabl
         }
     }
 
-    /// The failure the coordinator surfaces when this gate is shut.
-    public var error: WizardsperError {
-        switch self {
-        case .microphone: return .microphoneDenied
-        case .inputMonitoring: return .inputMonitoringDenied
-        case .accessibility: return .accessibilityDenied
-        }
-    }
 
     /// Deep link into the matching Privacy & Security pane.
     ///
@@ -109,12 +101,9 @@ public struct PermissionStatus: Sendable, Equatable {
         PermissionKind.allCases.filter { self[$0] == false }
     }
 
-    public var allGranted: Bool { missing.isEmpty }
 
     /// Everything Wizardsper needs to capture and transcribe. Accessibility is
     /// excluded: without it a session still succeeds, it just ends as `.copied`
-    /// instead of `.pasted`.
-    public var canDictate: Bool { microphone && inputMonitoring }
 
     @MainActor
     public static func current() -> PermissionStatus {

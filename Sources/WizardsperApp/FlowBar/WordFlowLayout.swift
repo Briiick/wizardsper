@@ -53,7 +53,9 @@ struct WordFlowLayout: Layout {
     /// Line breaking is pure in the width, so it is only redone when the width
     /// changes — not on every partial, which would be once or twice a second.
     private func recomputeIfNeeded(width: CGFloat, subviews: Subviews, cache: inout Cache) {
-        guard cache.width != width || cache.lines.count != lineCount(cache) else { return }
+        // Width is the only thing line breaking depends on; SwiftUI rebuilds the
+        // cache itself when the subviews change.
+        guard cache.width != width else { return }
         var lines: [[Int]] = []
         var heights: [CGFloat] = []
         var current: [Int] = []
@@ -94,6 +96,4 @@ struct WordFlowLayout: Layout {
             width: width.isFinite ? min(widest, width) : widest,
             height: totalHeight)
     }
-
-    private func lineCount(_ cache: Cache) -> Int { cache.lines.count }
 }

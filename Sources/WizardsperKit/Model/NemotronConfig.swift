@@ -45,10 +45,6 @@ public struct NemotronConfig: Sendable, Equatable {
     /// stack left context — they produce no output.
     public var encoderOutputFrames: Int { chunkMelFrames / 8 }
 
-    /// Seconds of audio behind one encoder output frame, for token timings.
-    public var secondsPerEncoderFrame: Double {
-        Double(Self.hopLength * 8) / Double(Self.sampleRate)
-    }
 
     public var chunkDuration: Double {
         Double(chunkSamples) / Double(Self.sampleRate)
