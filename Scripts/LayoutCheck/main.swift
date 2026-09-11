@@ -45,8 +45,7 @@ private func overflow(for testCase: Case) -> (rightmostPoints: Double, overflowP
         // width would hide the very thing this checks — whether its own idea of
         // its width keeps the ink inside.
         TranscriptFlowView(
-            text: testCase.text, color: .black,
-            maxWidth: frameWidth, minWidth: frameWidth, maxLines: maxLines)
+            text: testCase.text, color: .black, width: frameWidth, maxLines: maxLines)
             .padding(.top, 10)
     }
     .frame(width: canvasWidth, height: canvasHeight)
@@ -68,16 +67,22 @@ private func overflow(for testCase: Case) -> (rightmostPoints: Double, overflowP
     let scale = CGFloat(rep.pixelsWide) / canvasWidth
     let boundary = Int(frameWidth * scale)
     var rightmost = -1
+    var lowest = -1
     var beyond = 0
+    // Five lines of text plus the 10pt top padding, with slack for descenders.
+    let verticalLimit = Int((CGFloat(maxLines) * 21 + 10 + 8) * scale)
     for x in 0..<rep.pixelsWide {
         for y in 0..<rep.pixelsHigh {
             guard let colour = rep.colorAt(x: x, y: y) else { continue }
             guard colour.brightnessComponent < 0.75 else { continue }
             rightmost = max(rightmost, x)
+            lowest = max(lowest, y)
             // One pixel of slack for antialiasing on the boundary itself.
             if x > boundary + 1 { beyond += 1 }
+            if y > verticalLimit { beyond += 1 }
         }
     }
+    _ = lowest
     return (Double(max(rightmost, 0)) / Double(scale), beyond)
 }
 

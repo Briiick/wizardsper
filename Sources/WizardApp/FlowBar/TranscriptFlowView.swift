@@ -28,10 +28,16 @@ struct TranscriptFlowView: View {
     let text: String
     var color: Color = .primary
     var font: Font = .system(size: 13.5, weight: .medium, design: .rounded)
-    /// The widest the text may become. Past this it wraps.
-    var maxWidth: CGFloat = 420
-    /// Keeps the pill from collapsing on "Hi" and snapping wider on the next word.
-    var minWidth: CGFloat = 120
+    /// The width the text is laid out in. Fixed, not measured.
+    ///
+    /// It used to hug the content, and that was a feedback loop: once the text
+    /// wraps, the layout reports the width of the widest *line*, which is
+    /// bounded by the box it was given — so a box derived from that measurement
+    /// could never grow past wherever it first settled, and the transcript
+    /// wrapped far earlier than it needed to. Height is the only axis that can
+    /// safely follow the content, because nothing about the line breaking
+    /// depends on it.
+    var width: CGFloat = 420
     /// How tall the box may grow before it starts scrolling instead.
     var maxLines: Int = 5
     /// Placeholders ("Listening…") and outcome summaries are one thing being
@@ -41,7 +47,6 @@ struct TranscriptFlowView: View {
     /// Reports the laid-out height so the pill can grow with it.
     var onHeightChange: (CGFloat) -> Void = { _ in }
 
-    @State private var contentWidth: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
 
     private static let lineHeight: CGFloat = 18
@@ -79,9 +84,7 @@ struct TranscriptFlowView: View {
         CGFloat(maxLines) * Self.lineHeight + CGFloat(maxLines - 1) * Self.lineSpacing
     }
 
-    /// The box: as wide as it needs up to `maxWidth`, as tall as it needs up to
-    /// `maxLines`.
-    private var boxWidth: CGFloat { min(max(contentWidth, minWidth), maxWidth) }
+    /// As tall as the text needs, up to `maxLines`.
     private var boxHeight: CGFloat {
         min(max(contentHeight, Self.lineHeight), maxHeight)
     }
@@ -92,60 +95,58 @@ struct TranscriptFlowView: View {
 
     var body: some View {
         content
-            .frame(width: boxWidth, height: boxHeight, alignment: .topLeading)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: boxWidth)
+            // Measured here, outside the branch, so the placeholder and the
+            // outcome summary report their height too. Measuring only inside the
+            // word-flow branch left the box holding the *previous* session's
+            // height: a new press shows "Listening…", which is one line, but
+            // nothing reported that until the first word of speech arrived — so
+            // the pill stayed as tall as the last thing dictated.
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: SizeKey.self, value: proxy.size)
+                }
+            )
+            .offset(y: scroll)
+            // The hard clamp. `offset` moves pixels without changing layout, so
+            // the frame has to be pinned before the mask has anything correct to
+            // mask.
+            .frame(width: width, height: boxHeight, alignment: .topLeading)
+            .mask(topFade)
+            .onPreferenceChange(SizeKey.self) { size in
+                contentHeight = size.height
+            }
             .animation(reduceMotion ? nil : .smooth(duration: 0.26), value: boxHeight)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: text)
             .onChange(of: boxHeight, initial: true) { _, height in onHeightChange(height) }
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
     private var content: some View {
         if flowsWordByWord && !words.isEmpty {
-            flowing
+            WordFlowLayout(spacing: Self.wordSpacing, lineSpacing: Self.lineSpacing) {
+                ForEach(words) { word in
+                    Text(word.text)
+                        .font(font)
+                        .foregroundStyle(color)
+                        .fixedSize()
+                        // Opacity only, for the reason in the type comment.
+                        .transition(reduceMotion ? .identity : .opacity)
+                }
+            }
+            // The layout is told the real width to break lines against;
+            // measuring it afterwards would be measuring the answer, not the
+            // question.
+            .frame(width: width, alignment: .topLeading)
         } else {
             Text(text)
                 .font(font)
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: width, height: Self.lineHeight, alignment: .leading)
                 .transition(.opacity)
         }
-    }
-
-    private var flowing: some View {
-        WordFlowLayout(spacing: Self.wordSpacing, lineSpacing: Self.lineSpacing) {
-            ForEach(words) { word in
-                Text(word.text)
-                    .font(font)
-                    .foregroundStyle(color)
-                    .fixedSize()
-                    // Opacity only, for the reason in the type comment.
-                    .transition(reduceMotion ? .identity : .opacity)
-            }
-        }
-        // The layout is told the real width to break lines against; measuring it
-        // afterwards would be measuring the answer, not the question.
-        .frame(width: boxWidth, alignment: .topLeading)
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: SizeKey.self, value: proxy.size)
-            }
-        )
-        .offset(y: scroll)
-        // The hard clamp. `offset` moves pixels without changing layout, so the
-        // frame has to be pinned before the mask has anything correct to mask.
-        .frame(width: boxWidth, height: boxHeight, alignment: .topLeading)
-        .mask(topFade)
-        .onPreferenceChange(SizeKey.self) { size in
-            // Width is measured from the *unwrapped* natural size on the first
-            // pass, so it is taken only while the text still fits on one line;
-            // after that the box is at `maxWidth` and the height is what moves.
-            contentHeight = size.height
-            if contentWidth < maxWidth { contentWidth = max(contentWidth, size.width) }
-        }
-        .accessibilityHidden(true)
     }
 
     /// Dissolve the top edge once lines have scrolled off it, so the oldest line
@@ -173,6 +174,7 @@ struct TranscriptFlowView: View {
                 "Because also it keeps so if I oh yeah oh maybe I would buy it from you yeah let me know but so the answer your question"
         )
         TranscriptFlowView(text: "Listening…", color: .secondary, flowsWordByWord: false)
+            .border(.red.opacity(0.2))
     }
     .padding(24)
     .background(.quaternary)

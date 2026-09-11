@@ -9,18 +9,12 @@ import WizardKit
 /// sideways on every partial — twenty times a second, under the user's eyes —
 /// which is the one thing a dictation HUD must never do.
 enum FlowBarMetrics {
-    /// The pill is sized by its content, not fixed: a one-word transcript in a
-    /// 520-point slab is mostly empty box. These bound how far it can grow and
-    /// how small it may shrink.
-    static let pillMaxWidth: CGFloat = 520
-    static let pillMinWidth: CGFloat = 210
-    /// Room the transcript itself gets, once the meter and the padding are
-    /// accounted for.
-    static var transcriptMaxWidth: CGFloat {
-        pillMaxWidth - horizontalPadding * 2 - LevelBarsView.clusterWidth - contentSpacing
-    }
-    static var transcriptMinWidth: CGFloat {
-        pillMinWidth - horizontalPadding * 2 - LevelBarsView.clusterWidth - contentSpacing
+    /// Constant. The pill only changes height.
+    static let pillWidth: CGFloat = 520
+    /// Room the transcript gets, once the meter and the padding are accounted
+    /// for. This is the width lines are broken against.
+    static var transcriptWidth: CGFloat {
+        pillWidth - horizontalPadding * 2 - LevelBarsView.clusterWidth - contentSpacing
     }
     static let horizontalPadding: CGFloat = 18
     static let verticalPadding: CGFloat = 13
@@ -37,7 +31,7 @@ enum FlowBarMetrics {
     /// Transparent margin around the pill inside the window. The window clips
     /// its content, so the shadow and the fade need somewhere to live.
     static let margin: CGFloat = 14
-    static var panelWidth: CGFloat { pillMaxWidth + margin * 2 }
+    static var panelWidth: CGFloat { pillWidth + margin * 2 }
     /// Sized for the tallest the pill can get. The window cannot resize while
     /// it is on screen without the compositor flickering, so it is allocated at
     /// maximum and the pill grows inside it.
@@ -80,18 +74,12 @@ struct FlowBarView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: FlowBarMetrics.contentSpacing) {
+        HStack(alignment: .center, spacing: FlowBarMetrics.contentSpacing) {
             leading
-                // Pinned to the first line rather than centred: with a
-                // multi-line transcript a vertically centred meter drifts down
-                // the pill as the text grows, which reads as the meter moving
-                // rather than the text arriving.
-                .padding(.top, 1)
             TranscriptFlowView(
                 text: displayText,
                 color: textColor,
-                maxWidth: FlowBarMetrics.transcriptMaxWidth,
-                minWidth: FlowBarMetrics.transcriptMinWidth,
+                width: FlowBarMetrics.transcriptWidth,
                 maxLines: FlowBarMetrics.maxLines,
                 // Speech flows in word by word; a placeholder or an outcome
                 // summary is one thing being said, so it cross-fades whole.
@@ -101,9 +89,10 @@ struct FlowBarView: View {
         }
         .padding(.horizontal, FlowBarMetrics.horizontalPadding)
         .padding(.vertical, FlowBarMetrics.verticalPadding)
-        // Both axes intrinsic now: the pill widens with the sentence until
-        // `pillMaxWidth`, then grows downwards a line at a time until
-        // `pillMaxHeight`, after which the transcript scrolls inside it.
+        // Width fixed, height intrinsic: the pill is always the same width and
+        // grows downwards a line at a time until `pillMaxHeight`, after which
+        // the transcript scrolls inside it.
+        .frame(width: FlowBarMetrics.pillWidth, height: nil)
         .frame(minHeight: FlowBarMetrics.pillMinHeight)
         // Material rather than a colour, so the pill reads as macOS chrome in
         // both appearances without naming a single light or dark value.
