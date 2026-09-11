@@ -40,25 +40,29 @@ public struct FramingPolicy: Sendable, Equatable, Codable {
     public static let lowLatency = FramingPolicy(lookback: 240, lookahead: 0, frameOffset: 1)
 
     /// Half an FFT of real audio on each side, so no selected frame ever sees
-    /// the preprocessor's padding at all. Costs 256 samples (16 ms) of
-    /// lookahead, which is why it is not the default.
+    /// the preprocessor's own zero padding. 256 samples is exactly `n_fft / 2`,
+    /// the distance a centred 512-wide analysis window reaches past its centre.
+    ///
+    /// This is the shipped default. Measurement does **not** separate it from the
+    /// alternatives — over 73 utterances of LibriSpeech dev-clean the four
+    /// policies below score between 4.96% and 5.30%, a spread of four edits in
+    /// 1169 words, which is noise at this sample size. So the default is chosen
+    /// on the one ground that does distinguish them: this is the only policy
+    /// under which every frame handed to the encoder is computed entirely from
+    /// real audio. It ties for the best measured score, and its cost is 256
+    /// samples — 16 ms — of lookahead before a chunk can run.
     public static let fullContext = FramingPolicy(lookback: 256, lookahead: 256, frameOffset: 2)
 
     /// One full analysis window (400 samples) of real history and no lookahead.
     ///
-    /// This is the shipped default, chosen by measurement rather than argument:
-    /// on 86 s of LibriSpeech test-clean through the 560 ms tier it scores the
-    /// same 4.88% WER as `fullContext` while adding no latency at all, and beats
-    /// both `lowLatency` (5.37%) and a naive no-context framing (5.37%).
-    ///
-    /// The reason it can drop the lookahead and keep the accuracy: 400 samples
-    /// of history put the first selected frame's entire 512-wide analysis window
-    /// inside real audio, and only the last frame's window runs 16 samples past
-    /// the end of the chunk. `fullContext` buys those 16 samples back for 16 ms
-    /// of latency, and the measurement says they are not worth anything.
+    /// Everything the chunk's frames need on the left, nothing on the right: only
+    /// the last frame's window runs 16 samples past the end of the chunk, into
+    /// padding. Pick this over `fullContext` when the 16 ms of lookahead matters
+    /// more than that one frame's final 16 samples; it scored 5.13% against
+    /// `fullContext`'s 4.96% on the corpus above, which is two edits.
     public static let windowAligned = FramingPolicy(lookback: 400, lookahead: 0, frameOffset: 2)
 
-    public static let `default` = FramingPolicy.windowAligned
+    public static let `default` = FramingPolicy.fullContext
 
     public func windowSamples(chunkSamples: Int) -> Int {
         lookback + chunkSamples + lookahead

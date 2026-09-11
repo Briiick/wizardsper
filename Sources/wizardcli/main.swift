@@ -283,6 +283,47 @@ func commandSweep(_ arguments: Arguments) async throws {
     }
 }
 
+/// Exercise the live capture path without the hotkey or the app bundle.
+///
+/// This is the only way to run the render-thread tap block outside the app, and
+/// it is worth having: a tap block that inherits actor isolation traps on its
+/// very first buffer, and "the app dies when you hold the key" is a much worse
+/// place to discover that than here.
+func commandListen(_ arguments: Arguments) async throws {
+    let seconds = Double(arguments.option("seconds") ?? "4") ?? 4
+    try await AudioCapture.ensureMicrophoneAccess()
+
+    let ring = AudioRingBuffer()
+    let level = LevelBox()
+    let capture = await MainActor.run { AudioCapture(ring: ring, level: level) }
+    try await MainActor.run { try capture.start() }
+    print("capturing for \(seconds)s…")
+
+    var total = 0
+    var peak: Float = 0
+    let deadline = Date().addingTimeInterval(seconds)
+    var scratch = [Float](repeating: 0, count: 4096)
+    while Date() < deadline {
+        let frames = scratch.withUnsafeMutableBufferPointer { ring.read(into: $0) }
+        total += frames
+        peak = max(peak, level.poll())
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    await MainActor.run { capture.stop() }
+
+    let expected = Int(seconds * Double(NemotronConfig.sampleRate))
+    print(String(format: "captured %d frames (%.2f s of the %.0f s asked for)",
+                 total, Double(total) / Double(NemotronConfig.sampleRate), seconds))
+    print(String(format: "peak level %.4f, dropped %d frames", peak, ring.droppedFrames))
+    if total < expected / 2 {
+        print("WARNING: far less audio than expected — is the tap installed and the engine running?")
+    } else if peak < 0.0005 {
+        print("NOTE: the signal is essentially silent. Check the input device.")
+    } else {
+        print("capture path OK")
+    }
+}
+
 func commandHelp() {
     print(
         """
@@ -299,6 +340,10 @@ func commandHelp() {
           wizard-cli sweep <audio> --reference "ground truth" [--model DIR | --tier 560]
               Transcribe under every framing policy and score them side by side.
 
+          wizard-cli listen [--seconds 4]
+              Run the live capture path (engine, tap, converter, ring) and report
+              what arrived. Exercises the render-thread block outside the app.
+
         --framing accepts: lowLatency, fullContext, or lookback,lookahead,offset
         """)
 }
@@ -309,6 +354,7 @@ do {
     case "probe": try await commandProbe(arguments)
     case "transcribe": try await commandTranscribe(arguments)
     case "sweep": try await commandSweep(arguments)
+    case "listen": try await commandListen(arguments)
     case "help", "--help", "-h": commandHelp()
     default: fail("unknown command “\(arguments.command)”. Try: wizard-cli help")
     }

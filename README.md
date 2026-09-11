@@ -163,8 +163,28 @@ from Swift; it is written directly by the CoreML runtime.
 
 ### The audio tap
 
-The tap callback runs on a real-time render thread and does no allocation and
-takes no locks: preallocated conversion buffers, a hoisted converter input block,
+**The tap block must be built in a `nonisolated` context.** `AVAudioNodeTapBlock`
+is an imported Objective-C block typedef and so is not `@Sendable`, which means a
+closure literal written inside a `@MainActor` function silently *inherits*
+main-actor isolation. Swift 6 then emits an isolation check at the top of the
+block — and that check calls `dispatch_assert_queue` on the audio render thread,
+fails, and traps the process:
+
+```
+EXC_BREAKPOINT in _swift_task_checkIsolatedSwift
+  <- swift_task_isCurrentExecutorWithFlags
+  <- closure #1 in AudioCapture.buildEngine()
+  <- AVAudioNodeTap::TapMessage::RealtimeMessenger_Perform()
+```
+
+It fires on the first captured buffer, so the symptom is "the app dies the
+instant you hold the key" — with a stack that points at audio, not at isolation.
+`AudioCapture.makeTapBlock` is a `nonisolated static func` for exactly this
+reason. Marking the closure `@Sendable` would also detach it, but
+`AVAudioConverter` and `AVAudioPCMBuffer` are not `Sendable` and could not then
+be captured. `wizard-cli listen` exercises this path outside the app.
+
+Beyond that, the tap callback does no allocation and takes no locks: preallocated conversion buffers, a hoisted converter input block,
 `vDSP_rmsqv` for the level, and a lock-free SPSC ring for the samples. On
 `AVAudioEngineConfigurationChange` — a device swap, a sample-rate change,
 headphones going in — the engine is rebuilt and the tap reinstalled without

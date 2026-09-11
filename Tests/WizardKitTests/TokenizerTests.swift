@@ -108,10 +108,21 @@ struct FramingPolicyTests {
         #expect(!policy.selectionIsValid(chunkSamples: 8960, chunkMelFrames: 56))
     }
 
-    @Test("the default is the measured winner, not an arbitrary preset")
-    func defaultIsWindowAligned() {
-        #expect(FramingPolicy.default == FramingPolicy.windowAligned)
-        #expect(FramingPolicy.default.lookahead == 0, "the default must add no latency")
+    /// Measurement does not separate the policies (4.96%–5.30% over 73
+    /// utterances, a four-edit spread), so the default is pinned on the property
+    /// that does distinguish them: no selected frame may touch the
+    /// preprocessor's own zero padding. That needs n_fft/2 of real audio on each
+    /// side, and a frame offset that skips past it.
+    @Test("the default never lets a selected frame see the preprocessor's padding")
+    func defaultSeesOnlyRealAudio() {
+        let policy = FramingPolicy.default
+        #expect(policy == FramingPolicy.fullContext)
+        let halfWindow = NemotronConfig.fftLength / 2
+        #expect(policy.lookback >= halfWindow)
+        #expect(policy.lookahead >= halfWindow)
+        // The first selected frame is centred `frameOffset * hop` into the
+        // window; it must sit at least half an FFT past the window's start.
+        #expect(policy.frameOffset * NemotronConfig.hopLength >= halfWindow)
     }
 }
 

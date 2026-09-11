@@ -192,6 +192,71 @@ public final class AudioCapture: @unchecked Sendable {
         Log.audio.info("Capture stopped")
     }
 
+
+    /// Build the render-thread tap block, outside any actor's isolation.
+    ///
+    /// This must not be a closure literal written inside `buildEngine()`, and the
+    /// reason is a crash rather than a preference. `AVAudioNodeTapBlock` is an
+    /// imported Objective-C block typedef and is therefore *not* `@Sendable`, so
+    /// a closure literal appearing inside a `@MainActor` function silently
+    /// **inherits main-actor isolation**. Swift 6 then emits an isolation check
+    /// at the top of the block — and that check runs on the audio render thread,
+    /// where it calls `dispatch_assert_queue`, fails, and traps the process:
+    ///
+    ///     EXC_BREAKPOINT in _swift_task_checkIsolatedSwift
+    ///       <- swift_task_isCurrentExecutorWithFlags
+    ///       <- closure #1 in AudioCapture.buildEngine()
+    ///       <- AVAudioNodeTap::TapMessage::RealtimeMessenger_Perform()
+    ///
+    /// The crash lands on the very first captured buffer, so it looks like
+    /// "the app dies the moment you hold the key". Marking the closure
+    /// `@Sendable` would also detach it, but `AVAudioConverter` and
+    /// `AVAudioPCMBuffer` are not `Sendable` and could not then be captured.
+    /// Forming the block in a nonisolated context is what keeps it genuinely
+    /// nonisolated while still allowing those captures.
+    ///
+    /// Everything the block touches is either owned solely by this tap
+    /// generation (`converter`, `output`, `inputBlock`) or lock-free
+    /// (`context`, `ring`, `level`).
+    nonisolated private static func makeTapBlock(
+        converter: AVAudioConverter,
+        output: AVAudioPCMBuffer,
+        inputBlock: @escaping AVAudioConverterInputBlock,
+        context: TapContext,
+        ring: AudioRingBuffer,
+        level: LevelBox
+    ) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            // ---- render thread, real-time deadline ----
+            // No allocation, no locks, no ObjC collections, no logging. The one
+            // thing outside our control is AVAudioConverter itself, which may
+            // allocate internally on its first call or when it reprimes; what we
+            // guarantee is that our own code path does not.
+            context.parkPendingInput(buffer)
+
+            var conversionError: NSError?
+            let status = converter.convert(
+                to: output, error: &conversionError, withInputFrom: inputBlock)
+
+            // InputRanDry is the expected outcome, not a failure: we hand the
+            // converter one buffer and it converts all of it.
+            guard status == .haveData || status == .inputRanDry else {
+                context.recordConversionFailure()
+                return
+            }
+
+            let frames = Int(output.frameLength)
+            guard frames > 0, let channel = output.floatChannelData?[0] else { return }
+
+            var rms: Float = 0
+            vDSP_rmsqv(channel, 1, &rms, vDSP_Length(frames))
+            level.store(rms)
+
+            ring.write(UnsafeBufferPointer(start: channel, count: frames))
+            // ---- end render thread ----
+        }
+    }
+
     // MARK: - Engine construction
 
     @MainActor
@@ -245,36 +310,13 @@ public final class AudioCapture: @unchecked Sendable {
         let context = self.tapContext
         let inputBlock = self.converterInput
 
-        input.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: inputFormat) {
-            buffer, _ in
-            // ---- render thread, real-time deadline ----
-            // No allocation, no locks, no ObjC collections, no logging. The one
-            // thing outside our control is AVAudioConverter itself, which may
-            // allocate internally on its first call or when it reprimes; what we
-            // guarantee is that our own code path does not.
-            context.parkPendingInput(buffer)
-
-            var conversionError: NSError?
-            let status = converter.convert(
-                to: output, error: &conversionError, withInputFrom: inputBlock)
-
-            // InputRanDry is the expected outcome, not a failure: we hand the
-            // converter one buffer and it converts all of it.
-            guard status == .haveData || status == .inputRanDry else {
-                context.recordConversionFailure()
-                return
-            }
-
-            let frames = Int(output.frameLength)
-            guard frames > 0, let channel = output.floatChannelData?[0] else { return }
-
-            var rms: Float = 0
-            vDSP_rmsqv(channel, 1, &rms, vDSP_Length(frames))
-            level.store(rms)
-
-            ring.write(UnsafeBufferPointer(start: channel, count: frames))
-            // ---- end render thread ----
-        }
+        // Built by a nonisolated function — see `makeTapBlock` for why that is
+        // load-bearing rather than stylistic.
+        input.installTap(
+            onBus: 0, bufferSize: Self.tapBufferSize, format: inputFormat,
+            block: Self.makeTapBlock(
+                converter: converter, output: output, inputBlock: inputBlock,
+                context: context, ring: ring, level: level))
 
         engine.prepare()
         do {
