@@ -1,5 +1,13 @@
 import Foundation
-import FoundationModels
+
+// `FoundationModels` is a macOS 26 framework, and CI runners lag the SDK by
+// months. Guarding the import means the package still builds against an older
+// SDK — cleanup simply reports itself unavailable there, which is a state the
+// feature already has to handle anyway because most Macs have Apple Intelligence
+// switched off.
+#if canImport(FoundationModels)
+    import FoundationModels
+#endif
 
 /// Rewrites a finished transcript into ordinary written English, using the
 /// on-device model macOS already ships.
@@ -50,26 +58,32 @@ public actor TranscriptCleaner {
         public let note: String?
     }
 
-    private var session: LanguageModelSession?
+    #if canImport(FoundationModels)
+        private var session: LanguageModelSession?
+    #endif
 
     public init() {}
 
     // MARK: - Availability
 
     public static func availability() -> Availability {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            return .ready
-        case .unavailable(let reason):
-            switch reason {
-            case .appleIntelligenceNotEnabled: return .appleIntelligenceOff
-            case .deviceNotEligible: return .deviceUnsupported
-            case .modelNotReady: return .modelDownloading
-            @unknown default: return .other("Unavailable: \(reason)")
+        #if !canImport(FoundationModels)
+            return .other("Built against an SDK without Apple's on-device model.")
+        #else
+            switch SystemLanguageModel.default.availability {
+            case .available:
+                return .ready
+            case .unavailable(let reason):
+                switch reason {
+                case .appleIntelligenceNotEnabled: return .appleIntelligenceOff
+                case .deviceNotEligible: return .deviceUnsupported
+                case .modelNotReady: return .modelDownloading
+                @unknown default: return .other("Unavailable: \(reason)")
+                }
+            @unknown default:
+                return .other("Unrecognised availability")
             }
-        @unknown default:
-            return .other("Unrecognised availability")
-        }
+        #endif
     }
 
     /// The instructions, kept in one place because every word of them is load
@@ -98,12 +112,15 @@ public actor TranscriptCleaner {
     /// load. Called when the dictation key goes down, which buys the whole hold
     /// as head start.
     public func prewarm() {
-        guard Self.availability().isReady else { return }
-        let session = makeSession()
-        session.prewarm()
-        self.session = session
+        #if canImport(FoundationModels)
+            guard Self.availability().isReady else { return }
+            let session = makeSession()
+            session.prewarm()
+            self.session = session
+        #endif
     }
 
+    #if canImport(FoundationModels)
     private func makeSession() -> LanguageModelSession {
         // `permissiveContentTransformations` because the default guardrail
         // treats the *input* as something to be judged: a user dictating a
@@ -117,6 +134,7 @@ public actor TranscriptCleaner {
             useCase: .general, guardrails: .permissiveContentTransformations)
         return LanguageModelSession(model: model, instructions: Self.instructions)
     }
+    #endif
 
     // MARK: - Cleaning
 
@@ -138,6 +156,9 @@ public actor TranscriptCleaner {
             return Outcome(text: raw, changed: false, note: nil)
         }
 
+        #if !canImport(FoundationModels)
+            return Outcome(text: raw, changed: false, note: availability.explanation)
+        #else
         // A session is used once. Reusing one carries the previous dictation
         // into this rewrite as context — the model starts "remembering" what was
         // said a minute ago — and walks the 4096-token window towards an
@@ -190,7 +211,10 @@ public actor TranscriptCleaner {
             return Outcome(
                 text: raw, changed: false, note: reason == .unchanged ? nil : reason.rawValue)
         }
+        #endif
     }
+
+    #if canImport(FoundationModels)
 
     private static func describe(_ error: LanguageModelSession.GenerationError) -> String {
         switch error {
@@ -204,6 +228,7 @@ public actor TranscriptCleaner {
             return "The on-device model could not process this"
         }
     }
+    #endif
 }
 
 extension Duration {
