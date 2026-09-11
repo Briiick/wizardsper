@@ -178,6 +178,36 @@ tensor, and the only symptom is a transcript that decays into noise. Every model
 output goes through `MLArrayReader`, which reads the real strides and takes a
 dense fast path only after confirming the strides actually are dense.
 
+### The vocabulary is fuzzy on purpose, and gated on sound
+
+The model has 1024 SentencePiece pieces of general English. Proper nouns outside
+that distribution do not come back wrong — they were never candidates. "Claude"
+arrives as "cloud", "clawed" or "clod", and speaking more clearly cannot help,
+because the model is not choosing between those and the right answer.
+
+Correcting afterwards has to be fuzzy: a list of exact spellings would need every
+mis-hearing enumerated in advance, and the interesting ones are the ones nobody
+predicted. But fuzziness is dangerous in the other direction — a list that
+rewrites ordinary words corrupts transcripts that were already correct, silently.
+
+Edit distance alone cannot do it. Against "Claude", measured:
+
+| must correct | distance | | must not | distance |
+|---|---|---|---|---|
+| cloud | 0.33 | | clouds | 0.33 |
+| clode | 0.33 | | cloudy | 0.33 |
+| clawed | 0.50 | | loud, code, class, claim | 0.50 |
+| clod | 0.50 | | called, closed, cold, crowd | 0.67 |
+
+The words that must be corrected and the words that must not are at *identical*
+distances. So a match beyond 0.2 additionally requires the same consonant
+skeleton — a compact Metaphone-style key that folds "claude", "cloud" and
+"clawed" onto `klt` while leaving `klts` (clouds), `klty` (cloudy) and `klst`
+(closed) distinct. Distance proposes; phonetics disposes.
+
+Writing the tests is what found the hole: the first key dropped a trailing "y",
+which collapsed "cloudy" onto "claude" and would have rewritten it silently.
+
 ### The transcript scrolls only when it has to
 
 The pill shows one line, laid out left to right, with each word fading in where

@@ -69,7 +69,7 @@ struct PopoverView: View {
     /// The dot and the word beside it. Listening outranks everything: it is the
     /// only state where the user is actively waiting on Wizard.
     private var indicator: (color: Color, label: String) {
-        if status.isListening { return (.accentColor, "Listening") }
+        if status.isListening { return (FlowBarMetrics.tint, "Listening") }
         if status.installProgress != nil { return (.orange, "Installing") }
         if status.isReady { return (.green, "Ready") }
         return (.orange, "Not ready")
@@ -168,7 +168,7 @@ struct PopoverView: View {
                     .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(didCopy ? Color.green : Color.accentColor)
+                .foregroundStyle(didCopy ? Color.green : FlowBarMetrics.tint)
             }
 
             Text(transcript)

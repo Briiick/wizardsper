@@ -25,6 +25,10 @@ public final class Settings {
     public var showFlowBar = true { didSet { persist() } }
     public var keepHistory = true { didSet { persist() } }
     public var historyRetentionDays = 7 { didSet { persist() } }
+    /// Words the recogniser cannot produce, and what to write instead.
+    /// See `Vocabulary`.
+    public var vocabulary = Vocabulary.starter { didSet { persist() } }
+
     /// Linear input gain applied to captured audio before recognition.
     ///
     /// Not a preference so much as a calibration: microphones differ by more
@@ -49,6 +53,7 @@ public final class Settings {
         public var historyRetentionDays: Int
         public var minimumHoldSeconds: Double
         public var inputGain: Double
+        public var vocabulary: Vocabulary
     }
 
     public var snapshot: Snapshot {
@@ -57,7 +62,7 @@ public final class Settings {
             pasteAutomatically: pasteAutomatically, restorePasteboard: restorePasteboard,
             showFlowBar: showFlowBar, keepHistory: keepHistory,
             historyRetentionDays: historyRetentionDays, minimumHoldSeconds: minimumHoldSeconds,
-            inputGain: inputGain)
+            inputGain: inputGain, vocabulary: vocabulary)
     }
 
     public init(defaults: UserDefaults = .standard) {
@@ -78,6 +83,7 @@ public final class Settings {
         static let minimumHoldSeconds = "minimumHoldSeconds"
         static let launchAtLogin = "launchAtLogin"
         static let inputGain = "inputGain"
+        static let vocabulary = "vocabulary"
     }
 
     private func load() {
@@ -121,6 +127,11 @@ public final class Settings {
         if let gain = defaults.object(forKey: Key.inputGain) as? Double {
             inputGain = Double(GainBox.clamp(Float(gain)))
         }
+        if let data = defaults.data(forKey: Key.vocabulary),
+            let value = try? decoder.decode(Vocabulary.self, from: data)
+        {
+            vocabulary = value
+        }
     }
 
     private func persist() {
@@ -137,6 +148,7 @@ public final class Settings {
         defaults.set(minimumHoldSeconds, forKey: Key.minimumHoldSeconds)
         defaults.set(launchAtLogin, forKey: Key.launchAtLogin)
         defaults.set(inputGain, forKey: Key.inputGain)
+        defaults.set(try? encoder.encode(vocabulary), forKey: Key.vocabulary)
     }
 }
 

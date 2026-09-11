@@ -32,6 +32,17 @@ enum FlowBarMetrics {
     static var panelHeight: CGFloat { pillHeight + margin * 2 }
     /// Gap between the bottom of the window and the top of the Dock.
     static let bottomInset: CGFloat = 8
+
+    /// Wizard's own colour, rather than `.accentColor`.
+    ///
+    /// The system accent is whatever the user picked for their desktop, so the
+    /// meter changed colour from machine to machine and could land on the same
+    /// green the gain meter uses for "signal is healthy" — two different
+    /// meanings, one colour. A fixed hue keeps the pill recognisable and leaves
+    /// green free to mean only that.
+    static let tint = Color(
+        light: Color(red: 0.93, green: 0.49, blue: 0.13),
+        dark: Color(red: 1.0, green: 0.62, blue: 0.25))
 }
 
 /// The pill itself: level on the left, the live transcript on the right.
@@ -111,7 +122,7 @@ struct FlowBarView: View {
     /// an error, and colouring it like one trains the user to ignore the colour.
     private var isFailure: Bool { model.outcome?.isFailure == true }
 
-    private var accentColor: Color { isFailure ? .red : .accentColor }
+    private var accentColor: Color { isFailure ? .red : FlowBarMetrics.tint }
 
     private var textColor: Color {
         if isFailure { return .red }

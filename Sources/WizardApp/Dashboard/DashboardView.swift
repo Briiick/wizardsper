@@ -75,13 +75,14 @@ struct DashboardView: View {
     @State private var loginItemError: String?
 
     enum Pane: String, CaseIterable, Identifiable, Hashable {
-        case settings, models, history
+        case settings, vocabulary, models, history
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .settings: return "Settings"
+            case .vocabulary: return "Vocabulary"
             case .models: return "Model"
             case .history: return "History"
             }
@@ -90,6 +91,7 @@ struct DashboardView: View {
         var symbol: String {
             switch self {
             case .settings: return "gearshape"
+            case .vocabulary: return "character.book.closed"
             case .models: return "cpu"
             case .history: return "clock"
             }
@@ -136,6 +138,7 @@ struct DashboardView: View {
         switch pane ?? .settings {
         case .settings: settingsPane
         case .models: modelPane
+        case .vocabulary: VocabularyPane(settings: settings)
         case .history: HistoryListView()
         }
     }

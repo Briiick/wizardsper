@@ -13,7 +13,7 @@ struct LevelBarsView: View {
 
     /// Raw RMS from the capture layer, 0...1.
     let level: Float
-    var tint: Color = .accentColor
+    var tint: Color = FlowBarMetrics.tint
 
     /// Reduce Motion turns the spring into a plain value change: the heights
     /// still track the voice, they just stop overshooting on the way.

@@ -322,7 +322,11 @@ public final class DictationCoordinator {
             do {
                 let partial = try await asr.feed(chunk)
                 guard sessionID == id else { return }
-                if let partial { snapshot.transcript = partial }
+                // Corrected on the way to the screen too, not only at the end.
+                // Watching the pill say "cloud" and then silently paste "Claude"
+                // would make the user doubt one or the other. `apply` is
+                // idempotent, so running it on every partial is safe.
+                if let partial { snapshot.transcript = settings.vocabulary.apply(to: partial) }
             } catch let error as WizardError {
                 guard sessionID == id else { return }
                 finalize(.failed(error), for: id)
@@ -386,7 +390,7 @@ public final class DictationCoordinator {
 
         let transcript: String
         do {
-            transcript = try await asr.finish()
+            transcript = settings.vocabulary.apply(to: try await asr.finish())
         } catch let error as WizardError {
             guard sessionID == id else { return }
             finalize(.failed(error), for: id)
