@@ -68,6 +68,11 @@ public final class DictationCoordinator {
     /// ~200 ms it takes to paste would silently lose the second hold.
     private var chordIsDown = false
 
+    /// Capture is running for the dashboard's level meter, with no session
+    /// behind it. Tracked because starting and stopping the engine is shared
+    /// between two owners that must not stand on each other.
+    private var isPreviewing = false
+
     /// How much audio to hand the recogniser at once. Small enough that a
     /// partial appears promptly, large enough that the actor hop is not the
     /// dominant cost.
@@ -111,13 +116,20 @@ public final class DictationCoordinator {
         ring.reset()
         level.reset()
         try capture.start()
+        isPreviewing = true
         Log.audio.info("Level preview started")
     }
 
     public func stopLevelPreview() {
-        guard snapshot.state == .idle else { return }
-        capture.stop()
-        ring.reset()
+        guard isPreviewing else { return }
+        isPreviewing = false
+        // Only stop the engine if no session has taken it over in the meantime;
+        // a session owns capture for its whole life and must not have it pulled
+        // out from under it by a dashboard toggle.
+        if snapshot.state == .idle {
+            capture.stop()
+            ring.reset()
+        }
         Log.audio.info("Level preview stopped")
     }
 
@@ -224,6 +236,17 @@ public final class DictationCoordinator {
     // MARK: - Session
 
     private func startSession() {
+        // The dashboard's microphone test leaves capture running with no
+        // session attached. Starting a session on top of it would reset the ring
+        // buffer while the render thread is still writing into it — the one
+        // thing the lock-free handoff cannot survive — and `capture.start()`
+        // below would then be a no-op, so the session would run against indices
+        // that had been moved under a live producer.
+        if isPreviewing {
+            isPreviewing = false
+            capture.stop()
+            Log.audio.info("Level preview ended: a session took the microphone")
+        }
         guard let asr else {
             // Not a session — there is nothing to publish an outcome for — so
             // this surfaces through statusText rather than through an outcome.

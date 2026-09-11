@@ -35,14 +35,15 @@ struct FlowBarView: View {
     var body: some View {
         HStack(spacing: 12) {
             leading
-            Text(displayText)
-                .font(.system(size: 13.5, weight: .medium, design: .rounded))
-                .foregroundStyle(textColor)
-                // One line, truncated: the pill is a glance, not a document. A
-                // second line would change the pill's height mid-sentence.
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // One line always: the pill is a glance, not a document, and a
+            // second line would change its height mid-sentence.
+            TranscriptFlowView(
+                text: displayText,
+                color: textColor,
+                // Speech flows in word by word; a placeholder or an outcome
+                // summary is one thing being said, so it cross-fades whole.
+                flowsWordByWord: model.outcome == nil && !model.transcript.isEmpty,
+                reduceMotion: reduceMotion)
         }
         .padding(.horizontal, 18)
         .frame(width: FlowBarMetrics.pillWidth, height: FlowBarMetrics.pillHeight)
