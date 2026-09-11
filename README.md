@@ -1,10 +1,14 @@
 # Wizardsper
 
 Hold a key, talk, release. The transcript lands in whatever app you were already
-typing in. Everything runs on-device.
+typing in. Everything runs on your Mac — no account, no network, no telemetry.
 
-Menu-bar only — no Dock tile, no window, and the app never takes focus, because
+Menu-bar only: no Dock tile, no window, and the app never takes focus, because
 taking focus is the one thing that would break the paste.
+
+<sub>macOS 26 · Apple silicon · MIT licensed · the speech model is NVIDIA's, downloaded on first run, see [NOTICE](NOTICE.md)</sub>
+
+---
 
 ## How it works
 
@@ -338,4 +342,24 @@ Tests/WizardsperKitTests/    37 tests, including end-to-end recognition
 
 ## Licence
 
-The model is NVIDIA's, under the NVIDIA Open Model License.
+Wizardsper's source is MIT (see [LICENSE](LICENSE)).
+
+The speech model is **not** — it is NVIDIA's, under the
+[NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/),
+and it is not distributed with this repository. Wizardsper downloads it on first
+run and never redistributes it. Read [NOTICE.md](NOTICE.md) before doing anything
+commercial, and before bundling the weights into a fork.
+
+## Why it is not on the Mac App Store
+
+The App Store requires the sandbox, and two things Wizardsper needs cannot be
+done from inside one, with no entitlement that grants either: a global
+`CGEventTap` to see the dictation key anywhere (Input Monitoring), and posting a
+synthetic Cmd-V into another application (Accessibility). A sandboxed build could
+only watch keys inside its own window and could not paste, which is not a smaller
+version of this app — it is a different one.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: run
+`./Scripts/verify.sh` and read what it tells you.

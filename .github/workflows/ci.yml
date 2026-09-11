@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version && xcodebuild -version
+
+      - name: Build
+        run: swift build
+
+      # The recognition and capture tests skip themselves when no model or no
+      # microphone is present, which is the case on a CI runner. What runs here
+      # is everything that is pure: the vocabulary matcher, the clean-up guard,
+      # the framing arithmetic, the stride-honouring CoreML reader, the ring
+      # buffer, history retention.
+      - name: Test
+        run: swift test
+
+      - name: Build the app bundle
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project Wizardsper.xcodeproj -scheme Wizardsper \
+            -configuration Debug -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build

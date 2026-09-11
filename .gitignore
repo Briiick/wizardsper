@@ -1,10 +1,13 @@
 .build/
 .swiftpm/
 DerivedData/
-*.xcodeproj/
-*.xcworkspace/
 build/
 dist/
+*.xcodeproj/
+*.xcworkspace/
+
+# Downloaded at first run; never committed. See NOTICE.md.
 Models/
 *.mlmodelc/
+
 .DS_Store
