@@ -122,28 +122,11 @@ final class MenuBarController: NSObject {
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
-    /// Template images so macOS tints them for the current menu bar appearance —
-    /// a coloured image would stay dark on a dark menu bar.
-    ///
-    /// The names are tried in order because SF Symbol availability is not
-    /// something the compiler checks: a missing symbol yields `nil`, and a nil
-    /// image means an invisible status item.
-    private static func icon(listening: Bool) -> NSImage? {
-        let candidates =
-            listening
-            ? ["waveform.badge.microphone", "waveform.badge.mic", "waveform.circle", "waveform"]
-            : ["waveform"]
-        for name in candidates {
-            if let image = NSImage(
-                systemSymbolName: name,
-                accessibilityDescription: listening ? "Wizard is listening" : "Wizard")
-            {
-                image.isTemplate = true
-                return image
-            }
-        }
-        Log.ui.error("No usable SF Symbol for the menu bar icon.")
-        return nil
+    /// Wizard's own mark rather than an SF Symbol, so the two states are one
+    /// glyph with its arcs opened rather than two unrelated symbols. Drawn in
+    /// code, so it can never come back nil the way a missing symbol name does.
+    private static func icon(listening: Bool) -> NSImage {
+        WizardIcon.image(listening: listening)
     }
 
     private func refreshIcon() {
