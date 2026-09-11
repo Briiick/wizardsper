@@ -83,10 +83,21 @@ func resolveModelDirectory(_ arguments: Arguments) -> URL {
 /// punctuation-insensitive words. Matches how the published WER figures for
 /// these bundles are computed, so the numbers are comparable.
 func wordErrorRate(reference: String, hypothesis: String) -> (wer: Double, edits: Int, words: Int) {
+    // The same expansions standard ASR scoring applies before counting edits.
+    // LibriSpeech references spell abbreviations out ("MISTER"), while a model
+    // trained with punctuation emits "Mr." — scoring those as errors measures the
+    // reference's orthography, not the recogniser.
+    let expansions = [
+        "mr": "mister", "mrs": "missus", "dr": "doctor", "st": "saint",
+        "co": "company", "jr": "junior", "maj": "major", "gen": "general",
+        "capt": "captain", "lt": "lieutenant", "col": "colonel", "sgt": "sergeant",
+        "hon": "honorable", "rev": "reverend", "prof": "professor", "mt": "mount",
+    ]
     func normalise(_ text: String) -> [String] {
         text.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
+            .map { expansions[$0] ?? $0 }
     }
     let reference = normalise(reference)
     let hypothesis = normalise(hypothesis)

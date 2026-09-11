@@ -210,7 +210,18 @@ public final class DictationCoordinator {
 
     /// Key is up: drain the tail, decide an outcome, publish it.
     private func complete(_ id: SessionID) async {
-        guard sessionID == id, let asr else { return }
+        // A mismatched id means this session was already finalised by someone
+        // else — abort(), cancel(), or a failure in the pump — so returning here
+        // does not skip an outcome.
+        guard sessionID == id else { return }
+        // A live session with no recogniser should be unreachable (prepare() and
+        // cleanup both abort the session before clearing it). Finalise rather
+        // than return anyway: returning would be the one path that leaves the
+        // flow bar waiting on an outcome that never comes.
+        guard let asr else {
+            finalize(.failed(.modelsMissing("the recogniser went away mid-session")), for: id)
+            return
+        }
         drain?.cancel()
         drain = nil
 
@@ -224,6 +235,12 @@ public final class DictationCoordinator {
             do {
                 _ = try await asr.feed(chunk)
             } catch {
+                // Stop draining but do not fail the session: whatever was
+                // already decoded is still worth delivering, and finish() below
+                // will return it. Bailing out to .failed here would throw away a
+                // good transcript over a bad final buffer.
+                Log.session.notice(
+                    "Tail drain stopped early: \(error.localizedDescription, privacy: .public)")
                 break
             }
             guard sessionID == id else { return }
