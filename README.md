@@ -28,8 +28,20 @@ FluidInference. The encoder is int8 and runs on the Neural Engine; it keeps
 attention and convolution caches across chunks, so audio is processed once as it
 arrives rather than re-transcribed from a growing buffer.
 
-Measured on this machine (M4 Pro), 86 s of LibriSpeech test-clean through the
-560 ms tier: **4.88% WER at 46× realtime**.
+Measured on this machine (M4 Pro) over 73 utterances of LibriSpeech dev-clean
+(1150 reference words), scored with the usual abbreviation normalisation:
+
+| tier | WER | speed |
+|---|---|---|
+| 560 ms | **4.96%** | 47× realtime |
+| 160 ms | 5.39% | 4.8× realtime |
+
+Two caveats worth stating plainly. This is *dev-clean* — one chapter of dense art
+criticism, heavy with proper nouns — not the *test-clean* set the publisher's
+2.12% figure comes from, so the numbers are not comparable. And the 160 ms tier's
+published figure is "~10% on 20 files"; through this front-end it measures within
+half a point of the 560 ms tier, so if you want the lower latency it is a real
+option. Reproduce either with `wizard-cli`.
 
 ## Getting it running
 
@@ -104,18 +116,27 @@ edge would be computed against the model's own zero padding instead of the
 neighbouring audio, and that seam recurs at every chunk boundary. `FramingPolicy`
 widens each chunk with real audio and selects the frames that belong to it.
 
-Measured on 86 s of LibriSpeech through the 560 ms tier:
+Over the 73-utterance corpus above, through the 560 ms tier:
 
-| policy | lookback / lookahead / offset | WER | added latency |
-|---|---|---|---|
-| **windowAligned** (default) | 400 / 0 / 2 | **4.88%** | none |
-| fullContext | 256 / 256 / 2 | 4.88% | 16 ms |
-| lowLatency | 240 / 0 / 1 | 5.37% | none |
-| none | 0 / 0 / 0 | 5.37% | none |
+| policy | lookback / lookahead / offset | WER | edits | added latency |
+|---|---|---|---|---|
+| **fullContext** (default) | 256 / 256 / 2 | **4.96%** | 58 | 16 ms |
+| none | 0 / 0 / 0 | 4.96% | 58 | none |
+| windowAligned | 400 / 0 / 2 | 5.13% | 60 | none |
+| lowLatency | 240 / 0 / 1 | 5.30% | 62 | none |
+| wide | 512 / 512 / 3 | 5.30% | 62 | 32 ms |
 
-400 samples of history put the first selected frame's whole 512-wide analysis
-window inside real audio. `fullContext` buys back the last frame's final 16
-samples for 16 ms of latency, and the measurement says they are worth nothing.
+**Measurement does not separate these.** The whole spread is four edits in 1169
+words, which is noise at this sample size — an earlier run on just eight
+utterances ranked them differently. So the default is not "the one that won"; it
+is chosen on the one property that does distinguish them, with the measurement
+serving only to confirm it is not worse: `fullContext` is the only policy under
+which every frame handed to the encoder is computed entirely from real audio,
+with no part of any analysis window falling in the preprocessor's own zero
+padding. It costs 256 samples — 16 ms — of lookahead.
+
+If that 16 ms ever matters, `windowAligned` gives up only the last frame's final
+16 samples to get it back.
 
 ### The session rules
 

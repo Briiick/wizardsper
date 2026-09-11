@@ -78,19 +78,29 @@ public enum Paster {
         // about — so with restore switched off we never look at it at all.
         let captured: [CapturedItem] = restorePasteboard ? capture(pasteboard) : []
 
-        _ = pasteboard.clearContents()
+        // `clearContents()` returns the count produced by its own increment, and
+        // writing data afterwards does not bump it again, so this single value is
+        // both the count in force after our write and our claim ticket: if it
+        // still holds later, nobody has copied since and restoring is safe.
+        // Reading `changeCount` back after the write instead would leave a window
+        // in which another app's copy lands between the write and the read — we
+        // would record *their* count as ours, the check below would match, and we
+        // would overwrite their fresh copy with our stale snapshot.
+        let ownedChangeCount = pasteboard.clearContents()
+
         guard pasteboard.setString(text, forType: .string) else {
+            // `clearContents()` has already destroyed the user's clipboard by this
+            // point. Returning without putting the snapshot back would cost them
+            // both the transcript and whatever they had copied, for a write that
+            // never landed, so the snapshot is spent here rather than dropped.
+            if restorePasteboard {
+                restore(captured, to: pasteboard, ifChangeCountIs: ownedChangeCount)
+            }
             // The text reached neither the clipboard nor an app: the only path
             // in this function where the transcript is genuinely lost.
             Log.paste.error("NSPasteboard.setString failed; transcript was not delivered.")
             return .failed(.pasteFailed("the clipboard rejected the text"))
         }
-
-        // Read back rather than reusing `clearContents()`'s return value, so the
-        // recorded count is the one in force after our own write regardless of
-        // whether writing bumped it. This is our claim ticket: if it still holds
-        // later, nobody has copied since, and restoring is safe.
-        let ownedChangeCount = pasteboard.changeCount
 
         guard autoPaste else {
             Log.paste.debug("Auto-paste is off; leaving the transcript on the clipboard.")
