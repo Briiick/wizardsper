@@ -207,6 +207,48 @@ struct StreamingASRTests {
         #expect(small == large)
     }
 
+    /// The bug this guards against shipped once: the coordinator reset the ring
+    /// buffer between sessions but never the recogniser, so the second dictation
+    /// pasted the first one's words in front of its own. The earlier reset test
+    /// missed it because it called `reset()` itself — it tested the API, not what
+    /// happens without it. `finish()` therefore clears the token stream on its
+    /// own, and this holds it to that.
+    @Test("a second utterance does not inherit the first, even with no reset",
+          .enabled(if: Fixtures.modelsAvailable && Fixtures.audioAvailable))
+    func finishDoesNotAccumulate() async throws {
+        let asr = try await makeRecogniser()
+        try await asr.warmUp()
+        let samples = try AudioFileLoader.samples(at: try #require(Fixtures.speech))
+
+        func utterance() async throws -> String {
+            var index = 0
+            while index < samples.count {
+                let end = min(index + 4096, samples.count)
+                _ = try await asr.feed(Array(samples[index..<end]))
+                index = end
+            }
+            return try await asr.finish()
+        }
+
+        let first = try await utterance()
+        #expect(!first.isEmpty)
+        // Deliberately no reset() here.
+        let second = try await utterance()
+        #expect(!second.hasPrefix(first), "the second transcript begins with the first")
+        #expect(
+            second.count < first.count * 2,
+            "second transcript looks like two utterances glued together: \(second)")
+    }
+
+    @Test("warm-up leaves no tokens behind for the first real utterance",
+          .enabled(if: Fixtures.modelsAvailable))
+    func warmUpLeavesNoResidue() async throws {
+        let asr = try await makeRecogniser()
+        try await asr.warmUp()
+        #expect(await asr.partialTranscript.isEmpty)
+        #expect(await asr.processedChunks == 0)
+    }
+
     @Test("a framing policy that reads past the mask is refused at init",
           .enabled(if: Fixtures.modelsAvailable))
     func rejectsInvalidFraming() async throws {

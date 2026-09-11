@@ -46,9 +46,19 @@ public final class DictationCoordinator {
     // MARK: - Session state
 
     private var sessionID: SessionID?
+    /// The recogniser this session was started against.
+    ///
+    /// `complete()` must finish on the same object `pump()` fed. Reading
+    /// `self.asr` instead would, after a model swap mid-hold, drain the audio
+    /// into one recogniser and then ask a different one — which has heard
+    /// nothing — for the transcript.
+    private var sessionRecogniser: StreamingASR?
     private var sessionStart: Date?
     private var published = false
     private var drain: Task<Void, Never>?
+    /// Bumped by every `prepare()`. A load that finishes after a newer one
+    /// started must not install its result over the winner's.
+    private var loadGeneration = 0
 
     /// Whether the chord is physically down right now, which is not the same as
     /// whether a session is running: a press that lands while the previous
@@ -86,34 +96,57 @@ public final class DictationCoordinator {
     /// session is torn down first, because its encoder caches belong to the old
     /// model and are meaningless to the new one.
     public func prepare(tier: NemotronTier, directory: URL) async {
-        if sessionID != nil { abort(with: .modelsMissing("model reloaded mid-session")) }
+        loadGeneration += 1
+        let generation = loadGeneration
+        endSessionForModelChange()
+
         isReady = false
         activeTier = tier
         statusText = "Loading \(tier.displayName)…"
         do {
             let bundle = try await ModelBundle.load(from: directory)
+            guard generation == loadGeneration else { return }
             let recogniser = try StreamingASR(bundle: bundle, framing: settings.framing)
             // Force CoreML to build its plans now and prove the encoder woke up,
             // so the first real hold is not the thing that discovers a problem.
             try await recogniser.warmUp()
+            guard generation == loadGeneration else { return }
+            // A hold may have started during those awaits. It owns the outgoing
+            // recogniser, so end it before the swap rather than leaving it to
+            // drain into a model that never heard its audio.
+            endSessionForModelChange()
+
             self.asr = recogniser
             self.isReady = true
             self.statusText = "Ready"
             Log.session.info("Loaded \(tier.rawValue, privacy: .public) ms tier")
         } catch let error as WizardError {
+            guard generation == loadGeneration else { return }
             self.asr = nil
             self.statusText = error.errorDescription ?? "Model failed to load"
             Log.session.error("Model load failed: \(self.statusText, privacy: .public)")
         } catch {
+            guard generation == loadGeneration else { return }
             self.asr = nil
             self.statusText = error.localizedDescription
             Log.session.error("Model load failed: \(self.statusText, privacy: .public)")
         }
     }
 
+    private func endSessionForModelChange() {
+        guard let id = sessionID else { return }
+        finalize(.failed(.modelsMissing("the model was reloaded mid-session")), for: id)
+    }
+
     // MARK: - Trigger
 
     /// The chord went down.
+    ///
+    /// Returns immediately. This is called straight from the `CGEventTap`
+    /// callback, which runs on the main run loop: everything that happens before
+    /// it returns is time during which no other keystroke on the system is
+    /// delivered, and macOS disables a tap that is slow to return. Starting
+    /// `AVAudioEngine` takes tens of milliseconds, so it goes on a later turn.
     public func begin() {
         chordIsDown = true
         guard snapshot.state == .idle else {
@@ -122,24 +155,38 @@ public final class DictationCoordinator {
             Log.session.debug("Press arrived while finishing; deferring")
             return
         }
-        startSession()
+        scheduleStart()
     }
 
-    /// The chord came up.
+    /// The chord came up. Also returns immediately, for the same reason.
     public func end() {
         chordIsDown = false
         guard snapshot.state == .listening, let id = sessionID else { return }
         transition(to: .finishing)
-        capture.stop()
         Task { await complete(id) }
+    }
+
+    /// Begin a session on a later turn of the run loop.
+    ///
+    /// Used both by `begin()` and by `finalize()`'s restart. Going through a
+    /// Task is what keeps `finalize → startSession → finalize` from being
+    /// unbounded synchronous recursion: a microphone that fails to open while
+    /// the chord is held would otherwise loop until the stack overflowed.
+    private func scheduleStart() {
+        Task { @MainActor in
+            guard self.chordIsDown, self.sessionID == nil, self.snapshot.state == .idle
+            else { return }
+            self.startSession()
+        }
     }
 
     /// Give up on the current session without a transcript, still publishing an
     /// outcome so nothing downstream is left waiting.
     public func cancel() {
         guard let id = sessionID else { return }
-        capture.stop()
-        drain?.cancel()
+        // Clear the latch first: finalize() would otherwise read the chord as
+        // still held and start the very session this call is cancelling.
+        chordIsDown = false
         finalize(.nothing, for: id)
     }
 
@@ -155,32 +202,58 @@ public final class DictationCoordinator {
         }
         let id = SessionID()
         sessionID = id
+        sessionRecogniser = asr
         sessionStart = Date()
         published = false
         snapshot = SessionSnapshot(id: id, state: .listening, transcript: "", level: 0, outcome: nil)
         onStateChange?(.listening)
 
+        // Safe here and only here: capture is stopped, so the ring has no live
+        // producer racing these index writes.
         ring.reset()
         level.reset()
 
         drain = Task { [weak self] in
             await self?.pump(id, asr: asr)
         }
-
-        do {
-            try capture.start()
-            Log.session.info("Session \(id.description, privacy: .public) listening")
-        } catch let error as WizardError {
-            finalize(.failed(error), for: id)
-        } catch {
-            finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
-        }
+        Log.session.info("Session \(id.description, privacy: .public) listening")
     }
 
     /// Move captured audio into the recogniser for as long as this session owns
     /// the coordinator. Runs on the main actor but never blocks it: every
     /// expensive step is an `await` into the recogniser's own executor.
     private func pump(_ id: SessionID, asr: StreamingASR) async {
+        // Clear the previous utterance before a single sample is fed. Without
+        // this the encoder caches, the LSTM state and the accumulated token
+        // stream all carry over, and every transcript arrives with every earlier
+        // transcript glued to the front of it.
+        do {
+            try await asr.reset()
+        } catch let error as WizardError {
+            finalize(.failed(error), for: id)
+            return
+        } catch {
+            finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
+            return
+        }
+        guard sessionID == id else { return }
+
+        // Opening the engine here rather than in `startSession()` keeps it off
+        // the event-tap callback's turn of the run loop.
+        do {
+            try capture.start()
+        } catch let error as WizardError {
+            finalize(.failed(error), for: id)
+            return
+        } catch {
+            finalize(.failed(.audioEngineFailed(error.localizedDescription)), for: id)
+            return
+        }
+        guard sessionID == id else {
+            capture.stop()
+            return
+        }
+
         var scratch = [Float](repeating: 0, count: feedFrames)
         while !Task.isCancelled {
             guard sessionID == id else { return }
@@ -214,14 +287,19 @@ public final class DictationCoordinator {
         // else — abort(), cancel(), or a failure in the pump — so returning here
         // does not skip an outcome.
         guard sessionID == id else { return }
-        // A live session with no recogniser should be unreachable (prepare() and
-        // cleanup both abort the session before clearing it). Finalise rather
-        // than return anyway: returning would be the one path that leaves the
-        // flow bar waiting on an outcome that never comes.
-        guard let asr else {
+        // The session's own recogniser, not whatever `self.asr` is now: a model
+        // swap during the hold must not redirect the transcript to a model that
+        // never received the audio. Finalise rather than return if it is gone —
+        // returning is the one path that would leave the flow bar waiting on an
+        // outcome that never comes.
+        guard let asr = sessionRecogniser else {
             finalize(.failed(.modelsMissing("the recogniser went away mid-session")), for: id)
             return
         }
+        // Stop the producer before touching the ring: `read` is only safe
+        // against a live writer for the SPSC handoff, and the drain below is
+        // about to run to empty.
+        capture.stop()
         drain?.cancel()
         drain = nil
 
@@ -290,9 +368,8 @@ public final class DictationCoordinator {
 
     /// Capture died in a way the session cannot survive.
     private func abort(with error: WizardError) {
-        capture.stop()
-        drain?.cancel()
         guard let id = sessionID else {
+            capture.stop()
             statusText = error.errorDescription ?? "Audio failed"
             return
         }
@@ -306,6 +383,14 @@ public final class DictationCoordinator {
     private func finalize(_ outcome: SessionOutcome, for id: SessionID, duration: Double = 0) {
         guard sessionID == id, !published else { return }
         published = true
+
+        // The single exit, so the only place guaranteed to run on every terminal
+        // path. Stopping capture here is what stops a failure in the pump from
+        // leaving the microphone open — and its orange indicator lit — for the
+        // rest of the process's life.
+        capture.stop()
+        drain?.cancel()
+        drain = nil
 
         snapshot.outcome = outcome
         snapshot.state = .finishing
@@ -331,13 +416,15 @@ public final class DictationCoordinator {
         onOutcome?(outcome)
 
         sessionID = nil
+        sessionRecogniser = nil
         sessionStart = nil
-        drain = nil
         transition(to: .idle)
 
-        // The chord was pressed again while this session was finishing, and it
-        // is still down. Honour it now rather than dropping the hold.
-        if chordIsDown { startSession() }
+        // The chord was pressed again while this session was finishing and is
+        // still down, so honour it rather than dropping the hold — but not after
+        // a failure. Restarting on failure would retry a microphone that just
+        // refused to open, immediately and for as long as the key is held.
+        if chordIsDown, !outcome.isFailure { scheduleStart() }
     }
 
     private func transition(to state: SessionState) {

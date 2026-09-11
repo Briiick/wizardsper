@@ -88,6 +88,8 @@ public actor StreamingASR {
 
     private var tokenIDs: [Int] = []
     private var timings: [TokenTiming] = []
+    /// Snapshot taken by `finish()` before it clears `timings`.
+    private var finishedTimings: [TokenTiming] = []
     private var frameBase = 0
     public private(set) var processedChunks = 0
 
@@ -170,6 +172,7 @@ public actor StreamingASR {
         decoderOut = nil
         tokenIDs.removeAll(keepingCapacity: true)
         timings.removeAll(keepingCapacity: true)
+        finishedTimings.removeAll(keepingCapacity: true)
         frameBase = 0
         processedChunks = 0
     }
@@ -198,6 +201,17 @@ public actor StreamingASR {
                 throw WizardError.encoderProducedSilence
             }
         }
+        try reset()
+
+        // Then push one real chunk of silence through the whole pipeline. The
+        // encoder probe above does not touch the preprocessor, the decoder or
+        // the joint — and the preprocessor is precisely the model whose plan is
+        // expensive to build, because its `audio` input is a flexible shape and
+        // CoreML specialises per concrete length. Warming only the encoder would
+        // leave that build to land on the user's first hold, which is the cost
+        // the single fixed input length exists to avoid paying twice.
+        _ = try feed([Float](repeating: 0, count: config.chunkSamples))
+        _ = try finish()
         try reset()
     }
 
@@ -232,8 +246,20 @@ public actor StreamingASR {
             _ = try runChunk(audioLength: real)
             advanceWindow()
         }
-        return bundle.tokenizer.decode(tokenIDs)
+        let transcript = bundle.tokenizer.decode(tokenIDs)
+        // Clear the token stream here, not only in reset(). finish() means the
+        // utterance is over, and a caller that forgets to reset would otherwise
+        // have its next transcript silently prefixed with this one — a failure
+        // that looks like the recogniser hallucinating rather than like missing
+        // bookkeeping. The encoder caches and LSTM state still need reset().
+        finishedTimings = timings
+        tokenIDs.removeAll(keepingCapacity: true)
+        timings.removeAll(keepingCapacity: true)
+        return transcript
     }
+
+    /// Token timings for the utterance the last `finish()` returned.
+    public var lastFinishedTimings: [TokenTiming] { finishedTimings }
 
     public var partialTranscript: String {
         bundle.tokenizer.decode(tokenIDs)
