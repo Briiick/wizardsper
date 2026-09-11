@@ -7,9 +7,13 @@ import Testing
 /// whether to store at all, so these tests set those two values and put them
 /// back. Serialised because they share that global.
 @MainActor
-private func withSettings<T>(
-    keepHistory: Bool = true, retentionDays: Int = 7, _ body: () async throws -> T
-) async rethrows -> T {
+/// Deliberately not generic in its return type. Every caller discards the
+/// result, and a generic `T` forced the closure's value across an isolation
+/// boundary — which the newest toolchain allows and an older one rejects, so the
+/// suite compiled here and failed in CI.
+private func withSettings(
+    keepHistory: Bool = true, retentionDays: Int = 7, _ body: () async throws -> Void
+) async rethrows {
     let settings = Settings.shared
     let previousKeep = settings.keepHistory
     let previousDays = settings.historyRetentionDays
@@ -19,7 +23,7 @@ private func withSettings<T>(
         settings.keepHistory = previousKeep
         settings.historyRetentionDays = previousDays
     }
-    return try await body()
+    try await body()
 }
 
 @MainActor
@@ -44,7 +48,7 @@ struct TranscriptionHistoryTests {
     @Test("records survive a round trip to disk")
     func persists() async throws {
         let file = temporaryFile()
-        try await withSettings {
+        await withSettings {
             let history = TranscriptionHistory(fileURL: file)
             await history.load()
             history.append(record("hello world"))
@@ -61,7 +65,7 @@ struct TranscriptionHistoryTests {
     @MainActor
     @Test("newest first, regardless of the order records arrive in")
     func ordersNewestFirst() async throws {
-        try await withSettings(retentionDays: 0) {
+        await withSettings(retentionDays: 0) {
             let history = TranscriptionHistory(fileURL: temporaryFile())
             await history.load()
             history.append(record("older", daysAgo: 2))
@@ -76,7 +80,7 @@ struct TranscriptionHistoryTests {
     @MainActor
     @Test("retention drops records past the window")
     func prunesOld() async throws {
-        try await withSettings(retentionDays: 7) {
+        await withSettings(retentionDays: 7) {
             let history = TranscriptionHistory(fileURL: temporaryFile())
             await history.load()
             history.append(record("fresh", daysAgo: 1))
@@ -88,7 +92,7 @@ struct TranscriptionHistoryTests {
     @MainActor
     @Test("a retention of zero keeps everything")
     func zeroMeansForever() async throws {
-        try await withSettings(retentionDays: 0) {
+        await withSettings(retentionDays: 0) {
             let history = TranscriptionHistory(fileURL: temporaryFile())
             await history.load()
             history.append(record("ancient", daysAgo: 4000))
@@ -99,7 +103,7 @@ struct TranscriptionHistoryTests {
     @MainActor
     @Test("lowering the retention window prunes immediately")
     func pruneOnDemand() async throws {
-        try await withSettings(retentionDays: 0) {
+        await withSettings(retentionDays: 0) {
             let history = TranscriptionHistory(fileURL: temporaryFile())
             await history.load()
             history.append(record("old", daysAgo: 10))
@@ -116,7 +120,7 @@ struct TranscriptionHistoryTests {
     @Test("nothing is stored while history is switched off")
     func respectsTheOffSwitch() async throws {
         let file = temporaryFile()
-        try await withSettings(keepHistory: false) {
+        await withSettings(keepHistory: false) {
             let history = TranscriptionHistory(fileURL: file)
             await history.load()
             history.append(record("secret"))
@@ -128,7 +132,7 @@ struct TranscriptionHistoryTests {
     @MainActor
     @Test("deleting one record leaves the rest")
     func deletesOne() async throws {
-        try await withSettings {
+        await withSettings {
             let history = TranscriptionHistory(fileURL: temporaryFile())
             await history.load()
             let doomed = record("delete me")
@@ -145,7 +149,7 @@ struct TranscriptionHistoryTests {
     @Test("clearing empties the file too, not just the list")
     func clearReachesDisk() async throws {
         let file = temporaryFile()
-        try await withSettings {
+        await withSettings {
             let history = TranscriptionHistory(fileURL: file)
             await history.load()
             history.append(record("transient"))
@@ -169,7 +173,7 @@ struct TranscriptionHistoryTests {
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("this is not json".utf8).write(to: file)
 
-        try await withSettings {
+        await withSettings {
             let history = TranscriptionHistory(fileURL: file)
             await history.load()
             #expect(history.records.isEmpty, "a corrupt file must not block startup")
