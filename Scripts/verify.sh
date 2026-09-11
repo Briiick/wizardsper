@@ -40,6 +40,9 @@ else
   echo "  skipped — no fixture at $AUDIO"
 fi
 
+step "flow bar layout (rasterised)"
+./Scripts/check-layout.sh 2>&1 | sed 's/^/  /'; check ${PIPESTATUS[0]}
+
 step "live capture path"
 ./.build/release/wizard-cli listen --seconds 3 2>/dev/null | tail -3 | sed 's/^/  /'
 

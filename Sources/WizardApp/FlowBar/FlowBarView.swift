@@ -9,12 +9,26 @@ import WizardKit
 /// sideways on every partial — twenty times a second, under the user's eyes —
 /// which is the one thing a dictation HUD must never do.
 enum FlowBarMetrics {
-    static let pillWidth: CGFloat = 520
+    /// The pill is sized by its content, not fixed: a one-word transcript in a
+    /// 520-point slab is mostly empty box. These bound how far it can grow and
+    /// how small it may shrink.
+    static let pillMaxWidth: CGFloat = 520
+    static let pillMinWidth: CGFloat = 210
+    /// Room the transcript itself gets, once the meter and the padding are
+    /// accounted for.
+    static var transcriptMaxWidth: CGFloat {
+        pillMaxWidth - horizontalPadding * 2 - LevelBarsView.clusterWidth - contentSpacing
+    }
+    static var transcriptMinWidth: CGFloat {
+        pillMinWidth - horizontalPadding * 2 - LevelBarsView.clusterWidth - contentSpacing
+    }
+    static let horizontalPadding: CGFloat = 18
+    static let contentSpacing: CGFloat = 12
     static let pillHeight: CGFloat = 44
     /// Transparent margin around the pill inside the window. The window clips
     /// its content, so the shadow and the fade need somewhere to live.
     static let margin: CGFloat = 14
-    static var panelWidth: CGFloat { pillWidth + margin * 2 }
+    static var panelWidth: CGFloat { pillMaxWidth + margin * 2 }
     static var panelHeight: CGFloat { pillHeight + margin * 2 }
     /// Gap between the bottom of the window and the top of the Dock.
     static let bottomInset: CGFloat = 8
@@ -33,20 +47,25 @@ struct FlowBarView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: FlowBarMetrics.contentSpacing) {
             leading
             // One line always: the pill is a glance, not a document, and a
             // second line would change its height mid-sentence.
             TranscriptFlowView(
                 text: displayText,
                 color: textColor,
+                maxWidth: FlowBarMetrics.transcriptMaxWidth,
+                minWidth: FlowBarMetrics.transcriptMinWidth,
                 // Speech flows in word by word; a placeholder or an outcome
                 // summary is one thing being said, so it cross-fades whole.
                 flowsWordByWord: model.outcome == nil && !model.transcript.isEmpty,
                 reduceMotion: reduceMotion)
         }
-        .padding(.horizontal, 18)
-        .frame(width: FlowBarMetrics.pillWidth, height: FlowBarMetrics.pillHeight)
+        .padding(.horizontal, FlowBarMetrics.horizontalPadding)
+        // Height fixed, width intrinsic: the pill grows with the sentence and
+        // stops at `pillMaxWidth`, rather than being a constant slab with a word
+        // in the corner of it.
+        .frame(height: FlowBarMetrics.pillHeight)
         // Material rather than a colour, so the pill reads as macOS chrome in
         // both appearances without naming a single light or dark value.
         .background(.ultraThinMaterial, in: Capsule(style: .continuous))

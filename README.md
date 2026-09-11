@@ -82,9 +82,10 @@ is ever shown, which is indistinguishable from the user denying one.
 ./Scripts/verify.sh
 ```
 
-Builds the library, the CLI and the app bundle, runs the tests, transcribes a
-file with a known transcript, and exercises the live capture path against a real
-microphone. The last one matters more than it looks: the render-thread tap block
+Builds the library, the CLI and the app bundle, runs the tests, rasterises the
+flow bar's transcript view to prove it is not drawing outside the pill,
+transcribes a file with a known transcript, and exercises the live capture path
+against a real microphone. The last one matters more than it looks: the render-thread tap block
 is the single easiest place in this codebase to introduce a crash that compiles
 cleanly and passes every unit test.
 
