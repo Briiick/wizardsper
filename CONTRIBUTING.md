@@ -46,8 +46,9 @@ Swift 6 language mode, strict concurrency, no force-unwraps, no swallowed errors
 
 ## Things that look like bugs and are not
 
-- The CoreML `slice_by_index: zero shape error` printed once at model load.
-  See the README.
+- The CoreML `slice_by_index: zero shape error` printed once at model load. It
+  is the encoder's default function being built with an empty cache; no real
+  prediction ever runs that path. See `StreamingASR.reset()`.
 - Transcripts never ending with punctuation before `TranscriptPolish` runs. The
   recogniser only emits a sentence-final mark when it hears the next sentence
   begin, and a hold ends before that.
