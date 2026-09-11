@@ -2,14 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Not sandboxed: a global CGEventTap (Input Monitoring) and synthetic
-         Cmd-V into the frontmost app (Accessibility) are both unavailable to
-         sandboxed processes. -->
+    <!-- Not sandboxed. A global CGEventTap (Input Monitoring) and a synthetic
+         Cmd-V delivered to the frontmost app (Accessibility) are both
+         unavailable to a sandboxed process, and there is no entitlement that
+         grants them.
+
+         Nothing else is listed on purpose: the sandbox entitlements such as
+         com.apple.security.device.audio-input do nothing outside the sandbox,
+         and requesting entitlements that need a provisioning profile would make
+         a plain Apple Development signature fail. Microphone access for a
+         non-sandboxed app is governed by TCC plus NSMicrophoneUsageDescription
+         in Info.plist. -->
     <key>com.apple.security.app-sandbox</key>
     <false/>
-    <key>com.apple.security.device.audio-input</key>
-    <true/>
-    <key>com.apple.security.automation.apple-events</key>
-    <true/>
 </dict>
 </plist>

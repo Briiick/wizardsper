@@ -12,7 +12,6 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
-    DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
     # A stable signing identity keeps the TCC grants (Microphone, Accessibility,
     # Input Monitoring) across rebuilds. Ad-hoc signing changes the cdhash every
@@ -23,11 +22,32 @@ settings:
     OTHER_CODE_SIGN_FLAGS: "--timestamp=none"
 
 targets:
+  # Split out as its own module so the app target can `import WizardKit`, and so
+  # the CLI harness and the unit tests build the exact same code the app runs.
+  WizardKit:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/WizardKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bricken.wizard.kit
+        PRODUCT_NAME: WizardKit
+        DEFINES_MODULE: YES
+        GENERATE_INFOPLIST_FILE: YES
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks"
+        SKIP_INSTALL: NO
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: CoreML.framework
+      - sdk: Accelerate.framework
+      - sdk: AppKit.framework
+
   Wizard:
     type: application
     platform: macOS
     sources:
-      - path: Sources/WizardKit
       - path: Sources/WizardApp
     settings:
       base:
@@ -36,10 +56,10 @@ targets:
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Wizard.entitlements
         ENABLE_APP_SANDBOX: NO
-        SWIFT_EMIT_LOC_STRINGS: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         COMBINE_HIDPI_IMAGES: YES
     dependencies:
-      - sdk: AppKit.framework
-      - sdk: AVFoundation.framework
-      - sdk: CoreML.framework
-      - sdk: Accelerate.framework
+      - target: WizardKit
+        embed: true
+        codeSign: true
+      - sdk: ServiceManagement.framework

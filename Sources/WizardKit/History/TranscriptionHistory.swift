@@ -112,8 +112,8 @@ public struct TranscriptionRecord: Codable, Sendable, Identifiable, Equatable {
 public final class TranscriptionHistory {
     public static let shared = TranscriptionHistory()
 
-    /// Newest first — the order the list renders and the order `retain(_:_:)`
-    /// depends on when it trims the tail.
+    /// Newest first — the order the list renders, and the order `retained`
+    /// relies on when it trims the tail to the cap.
     public private(set) var records: [TranscriptionRecord] = []
 
     /// Set when a save fails, cleared by the next one that succeeds, so the
@@ -199,7 +199,9 @@ public final class TranscriptionHistory {
 
         var lines: [String] = ["Wizard transcription history"]
         let count = records.count
-        lines.append("\(count) transcription\(count == 1 ? "" : "s") · exported \(stamp.string(from: Date()))")
+        lines.append(
+            "\(count) transcription\(count == 1 ? "" : "s") · "
+                + "exported \(stamp.string(from: Date()))")
         for record in records {
             lines.append("")
             lines.append("----")

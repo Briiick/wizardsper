@@ -32,8 +32,12 @@ public final class HotkeyMonitor {
     private let onPress: @MainActor () -> Void
     private let onRelease: @MainActor () -> Void
 
-    private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    // `nonisolated(unsafe)` because `deinit` has to invalidate the tap, and a
+    // nonisolated deinit cannot touch main-actor state. The unsafety is
+    // contained: these are written only by `start()` and `stop()`, both
+    // main-actor, and deinit runs only once no other reference survives.
+    nonisolated(unsafe) private var tap: CFMachPort?
+    nonisolated(unsafe) private var source: CFRunLoopSource?
 
     /// Whether the chord was down as of the last event we saw.
     ///
@@ -247,8 +251,12 @@ private func hotkeyMonitorTapCallback(
     // instead of hopping. A `Task { @MainActor }` here would defer the edge to a
     // later turn of the run loop, which reorders press against release when the
     // chord is tapped quickly.
+    // Read the flags out before the closure: `CGEvent` is not Sendable, and
+    // capturing it would be a data-race error even though only this one
+    // Sendable field is used.
+    let flags = event.flags
     MainActor.assumeIsolated {
-        monitor.handle(type: type, flags: event.flags)
+        monitor.handle(type: type, flags: flags)
     }
 
     return Unmanaged.passUnretained(event)

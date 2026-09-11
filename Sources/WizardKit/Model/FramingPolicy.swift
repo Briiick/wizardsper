@@ -39,12 +39,26 @@ public struct FramingPolicy: Sendable, Equatable, Codable {
     /// 96 samples into the preprocessor's zero padding.
     public static let lowLatency = FramingPolicy(lookback: 240, lookahead: 0, frameOffset: 1)
 
-    /// Half an FFT of real audio on each side, so every selected frame is
-    /// computed entirely from real samples and no frame ever sees the
-    /// preprocessor's padding. Costs 256 samples (16 ms) of lookahead.
+    /// Half an FFT of real audio on each side, so no selected frame ever sees
+    /// the preprocessor's padding at all. Costs 256 samples (16 ms) of
+    /// lookahead, which is why it is not the default.
     public static let fullContext = FramingPolicy(lookback: 256, lookahead: 256, frameOffset: 2)
 
-    public static let `default` = FramingPolicy.fullContext
+    /// One full analysis window (400 samples) of real history and no lookahead.
+    ///
+    /// This is the shipped default, chosen by measurement rather than argument:
+    /// on 86 s of LibriSpeech test-clean through the 560 ms tier it scores the
+    /// same 4.88% WER as `fullContext` while adding no latency at all, and beats
+    /// both `lowLatency` (5.37%) and a naive no-context framing (5.37%).
+    ///
+    /// The reason it can drop the lookahead and keep the accuracy: 400 samples
+    /// of history put the first selected frame's entire 512-wide analysis window
+    /// inside real audio, and only the last frame's window runs 16 samples past
+    /// the end of the chunk. `fullContext` buys those 16 samples back for 16 ms
+    /// of latency, and the measurement says they are not worth anything.
+    public static let windowAligned = FramingPolicy(lookback: 400, lookahead: 0, frameOffset: 2)
+
+    public static let `default` = FramingPolicy.windowAligned
 
     public func windowSamples(chunkSamples: Int) -> Int {
         lookback + chunkSamples + lookahead

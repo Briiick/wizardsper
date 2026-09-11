@@ -86,7 +86,11 @@ public struct PermissionStatus: Sendable, Equatable {
     public var inputMonitoring: Bool
     public var accessibility: Bool
 
-    public init(microphone: Bool, inputMonitoring: Bool, accessibility: Bool) {
+    /// Defaults to "nothing granted" so a UI model can hold a status before the
+    /// first check has run, without having to make the property optional.
+    public init(
+        microphone: Bool = false, inputMonitoring: Bool = false, accessibility: Bool = false
+    ) {
         self.microphone = microphone
         self.inputMonitoring = inputMonitoring
         self.accessibility = accessibility

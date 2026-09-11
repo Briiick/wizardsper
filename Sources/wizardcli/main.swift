@@ -50,7 +50,8 @@ func parseFraming(_ raw: String?) -> FramingPolicy {
     guard let raw else { return .default }
     switch raw.lowercased() {
     case "lowlatency", "low-latency", "low": return .lowLatency
-    case "fullcontext", "full-context", "full", "default": return .fullContext
+    case "fullcontext", "full-context", "full": return .fullContext
+    case "windowaligned", "window-aligned", "default": return .windowAligned
     default:
         let parts = raw.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
         guard parts.count == 3 else {
@@ -119,9 +120,10 @@ func describe(_ description: MLFeatureDescription) -> String {
             .map { "[" + $0.map(\.stringValue).joined(separator: "×") + "]" }
         line += "  enumerated " + options.joined(separator: " ")
     case .range:
+        // Each entry is an NSValue boxing an NSRange of (lower, upper).
         let ranges = constraint.shapeConstraint.sizeRangeForDimension.map { value -> String in
-            guard let pair = value as? [NSNumber], pair.count == 2 else { return "?" }
-            return "\(pair[0])...\(pair[1])"
+            let range = value.rangeValue
+            return "\(range.location)...\(range.length)"
         }
         line += "  FLEXIBLE range " + ranges.joined(separator: " × ")
     case .unspecified:
@@ -242,7 +244,7 @@ func commandSweep(_ arguments: Arguments) async throws {
     var policies: [(String, FramingPolicy)] = [
         ("lowLatency  240/0/1", .lowLatency),
         ("fullContext 256/256/2", .fullContext),
-        ("lookback-only 400/0/2", FramingPolicy(lookback: 400, lookahead: 0, frameOffset: 2)),
+        ("windowAligned 400/0/2", .windowAligned),
         ("offset-0     256/256/1", FramingPolicy(lookback: 256, lookahead: 256, frameOffset: 1)),
         ("wide        512/512/3", FramingPolicy(lookback: 512, lookahead: 512, frameOffset: 3)),
         ("none          0/0/0", FramingPolicy(lookback: 0, lookahead: 0, frameOffset: 0)),

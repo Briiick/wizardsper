@@ -49,49 +49,91 @@ public enum AudioFileLoader {
             throw WizardError.audioEngineFailed("could not allocate the conversion buffer")
         }
 
+        let pull = FilePull(file: file, buffer: input, frames: readChunk)
+        // Hoisted out of the loop: a fresh closure per `convert` call would be an
+        // allocation per 16 k frames, and the block must be the same object for
+        // the converter's internal bookkeeping to stay meaningful.
+        let inputBlock: AVAudioConverterInputBlock = { _, status in pull.next(status) }
+
         var samples: [Float] = []
         samples.reserveCapacity(Int(Double(file.length) * ratio) + 1024)
-        var reachedEnd = false
 
         while true {
             output.frameLength = 0
-            // AVAudioConverter takes an NSErrorPointer, not a generic Error box.
-            var thrown: NSError?
-            let status = converter.convert(to: output, error: &thrown) { _, outStatus in
-                if reachedEnd {
-                    outStatus.pointee = .endOfStream
-                    return nil
-                }
-                do {
-                    input.frameLength = 0
-                    try file.read(into: input, frameCount: readChunk)
-                } catch {
-                    thrown = error as NSError
-                    outStatus.pointee = .endOfStream
-                    return nil
-                }
-                if input.frameLength == 0 {
-                    reachedEnd = true
-                    outStatus.pointee = .endOfStream
-                    return nil
-                }
-                outStatus.pointee = .haveData
-                return input
-            }
+            var conversionError: NSError?
+            let status = converter.convert(to: output, error: &conversionError, withInputFrom: inputBlock)
 
-            if let thrown {
+            if let failure = pull.failure {
+                throw WizardError.audioEngineFailed("decode failed: \(failure.localizedDescription)")
+            }
+            if let conversionError {
                 throw WizardError.audioEngineFailed(
-                    "decode failed: \(thrown.localizedDescription)")
+                    "conversion failed: \(conversionError.localizedDescription)")
             }
             if let channel = output.floatChannelData?[0], output.frameLength > 0 {
                 samples.append(
                     contentsOf: UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
             }
-            if status == .endOfStream || (status == .inputRanDry && reachedEnd) { break }
-            if status == .error { throw WizardError.audioEngineFailed("conversion reported an error") }
-            if output.frameLength == 0 && reachedEnd { break }
+            switch status {
+            case .haveData:
+                continue
+            case .endOfStream:
+                return samples
+            case .inputRanDry:
+                // Only reachable if the pull block reported `.noDataNow`, which
+                // it never does; treat it as the end rather than spinning.
+                return samples
+            case .error:
+                throw WizardError.audioEngineFailed("conversion reported an error")
+            @unknown default:
+                return samples
+            }
         }
-        return samples
+    }
+
+    /// Feeds the converter one read of the file at a time.
+    ///
+    /// `AVAudioConverterInputBlock` is declared `@Sendable`, but the converter
+    /// invokes it synchronously on the thread that called `convert` — the state
+    /// below never actually crosses a thread. Holding it in an
+    /// `@unchecked Sendable` box states that invariant once, instead of leaving
+    /// five concurrency warnings scattered over a strictly sequential loop.
+    private final class FilePull: @unchecked Sendable {
+        private let file: AVAudioFile
+        private let buffer: AVAudioPCMBuffer
+        private let frames: AVAudioFrameCount
+        private var reachedEnd = false
+        private(set) var failure: NSError?
+
+        init(file: AVAudioFile, buffer: AVAudioPCMBuffer, frames: AVAudioFrameCount) {
+            self.file = file
+            self.buffer = buffer
+            self.frames = frames
+        }
+
+        func next(
+            _ status: UnsafeMutablePointer<AVAudioConverterInputStatus>
+        ) -> AVAudioPCMBuffer? {
+            if reachedEnd || failure != nil {
+                status.pointee = .endOfStream
+                return nil
+            }
+            do {
+                buffer.frameLength = 0
+                try file.read(into: buffer, frameCount: frames)
+            } catch {
+                failure = error as NSError
+                status.pointee = .endOfStream
+                return nil
+            }
+            if buffer.frameLength == 0 {
+                reachedEnd = true
+                status.pointee = .endOfStream
+                return nil
+            }
+            status.pointee = .haveData
+            return buffer
+        }
     }
 
     private static func readDirect(file: AVAudioFile, format: AVAudioFormat) throws -> [Float] {
