@@ -152,6 +152,21 @@ struct PopoverView: View {
 
     // MARK: - Last transcript
 
+    /// Where the transcript box stops growing.
+    ///
+    /// A transcript is however long the user spoke for, and people dictate
+    /// paragraphs. The box has to grow with the text — four lines cut an
+    /// ordinary sentence off mid-word — but it cannot grow without limit: the
+    /// popover is sized from this view's reported height, and a popover taller
+    /// than the screen is clipped by the window server rather than scrolled.
+    /// Past this the text truncates; Copy and the History pane still hold all
+    /// of it.
+    ///
+    /// An instance property rather than a `static`: statics on a `View` are
+    /// main-actor-isolated under older toolchains, and the layout helpers below
+    /// are nonisolated.
+    private let transcriptLineLimit = 6
+
     private func transcriptSection(_ transcript: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -173,9 +188,17 @@ struct PopoverView: View {
 
             Text(transcript)
                 .font(.system(size: 12))
-                .lineLimit(4)
+                .lineLimit(transcriptLineLimit)
+                .truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+                // Nothing downstream clips: the popover has no scroll view and
+                // the sections around this one have no background of their own,
+                // so a text run that laid itself out taller than the height
+                // reserved for it would draw straight over the footer. This
+                // makes the drawn height and the measured height the same
+                // number by construction rather than by agreement.
+                .clipped()
                 .padding(9)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))

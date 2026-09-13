@@ -337,6 +337,42 @@ func commandListen(_ arguments: Arguments) async throws {
     }
 }
 
+/// Run the text pipeline over a transcript and show every stage.
+///
+/// "Is clean-up working?" is hard to answer from the outside: it only changes
+/// text that needs changing, and when it declines it does so silently. This
+/// prints what each stage did, so a transcript that came out unchanged can be
+/// told apart from one that was never processed.
+func commandClean(_ arguments: Arguments) async throws {
+    let raw = arguments.positional.joined(separator: " ")
+    guard !raw.isEmpty else { fail("usage: wizardsper-cli clean \"some transcript\"") }
+
+    let settings = await MainActor.run { WizardsperKit.Settings() }
+    let vocabulary = await MainActor.run { settings.vocabulary }
+    let polish = await MainActor.run { settings.polish }
+
+    print("raw        \(raw)")
+
+    let afterVocabulary = vocabulary.apply(to: raw)
+    print("vocabulary \(afterVocabulary)\(afterVocabulary == raw ? "   (no change)" : "")")
+
+    let afterPolish = polish.apply(to: afterVocabulary)
+    print("polish     \(afterPolish)\(afterPolish == afterVocabulary ? "   (no change)" : "")")
+
+    let availability = TranscriptCleaner.availability()
+    print("model      \(availability.explanation)")
+    guard availability.isReady else { return }
+
+    let started = Date()
+    let outcome = await TranscriptCleaner().clean(
+        afterPolish, deadline: .seconds(Int(arguments.option("deadline").flatMap(Int.init) ?? 10)))
+    let elapsed = Date().timeIntervalSince(started)
+    print("cleanup    \(outcome.text)")
+    print(String(format: "           %@ in %.2f s", outcome.changed ? "changed" : "unchanged", elapsed))
+    if let note = outcome.note { print("           reason: \(note)") }
+    if let rejected = outcome.rejected { print("           model said: \(rejected)") }
+}
+
 func commandHelp() {
     print(
         """
@@ -353,6 +389,9 @@ func commandHelp() {
           wizardsper-cli sweep <audio> --reference "ground truth" [--model DIR | --tier 560]
               Transcribe under every framing policy and score them side by side.
 
+          wizardsper-cli clean "a transcript" [--deadline 10]
+              Run vocabulary, polish and on-device clean-up, showing each stage.
+
           wizardsper-cli listen [--seconds 4]
               Run the live capture path (engine, tap, converter, ring) and report
               what arrived. Exercises the render-thread block outside the app.
@@ -368,6 +407,7 @@ do {
     case "transcribe": try await commandTranscribe(arguments)
     case "sweep": try await commandSweep(arguments)
     case "listen": try await commandListen(arguments)
+    case "clean": try await commandClean(arguments)
     case "help", "--help", "-h": commandHelp()
     default: fail("unknown command “\(arguments.command)”. Try: wizardsper-cli help")
     }
