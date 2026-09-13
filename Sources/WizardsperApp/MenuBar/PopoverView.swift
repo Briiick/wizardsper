@@ -296,8 +296,11 @@ extension AppStatusModel {
         status.isReady = true
         status.statusText = "Loaded and listening for the dictation key."
         status.activeTier = .ms560
+        // Long enough to wrap past a single line: a one-line fixture is what let
+        // the transcript box ship capped at four lines without anyone noticing.
         status.lastTranscript =
-            "The encoder warms up on the first hold and stays resident after that."
+            "The encoder warms up on the first hold and stays resident after that, "
+            + "which means the second utterance starts with no perceptible delay at all."
         status.permissions = PermissionStatus(
             microphone: true, inputMonitoring: true, accessibility: true)
         return status
