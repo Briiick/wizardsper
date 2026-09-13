@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -362,10 +363,47 @@ struct MediaPauserTests {
         #expect(!pauser.didPause)
     }
 
-    /// Reads the default *output* device, so Wizardsper's own microphone capture
-    /// can never make it answer true.
     @Test("the detector answers without throwing or hanging")
     func detectorIsSafe() {
         _ = MediaPauser.isSomethingPlaying()
+    }
+
+    /// The regression this guards against shipped: detection used to ask
+    /// `kAudioDevicePropertyDeviceIsRunningSomewhere`, which is true whenever any
+    /// process holds the output device open — and `com.apple.TelephonyUtilities`
+    /// holds it open for Handoff with nothing audible. Because the media key is a
+    /// *toggle*, a false positive did not fail to pause: it pressed play on a
+    /// paused player. It was intermittent because the daemon comes and goes.
+    ///
+    /// Whatever is reported must therefore be a real application. Daemons have no
+    /// `NSRunningApplication` at all, which is the test.
+    @Test("anything reported as playing is a real application, never a daemon")
+    func neverReportsADaemon() {
+        guard let identifier = MediaPauser.playingApplication() else { return }
+
+        #expect(
+            !identifier.hasPrefix("pid "),
+            "reported a process with no application identity: \(identifier)")
+        #expect(
+            identifier != "com.apple.TelephonyUtilities",
+            "reported the Handoff daemon, which is the exact bug this replaced")
+
+        let matching = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+        #expect(!matching.isEmpty, "\(identifier) is not a running application")
+        #expect(
+            matching.allSatisfy { $0.activationPolicy != .prohibited },
+            "\(identifier) is a background-only process")
+    }
+
+    /// It must also never report Wizardsper. The microphone runs on the input
+    /// side, so this should be structurally impossible — but a session that
+    /// paused *itself* would deadlock the feature in a way that is very hard to
+    /// read from the outside.
+    @Test("it never reports Wizardsper itself")
+    func neverReportsUs() {
+        let ours = Bundle.main.bundleIdentifier
+        if let identifier = MediaPauser.playingApplication(), let ours {
+            #expect(identifier != ours)
+        }
     }
 }
