@@ -359,13 +359,28 @@ func commandClean(_ arguments: Arguments) async throws {
     let afterPolish = polish.apply(to: afterVocabulary)
     print("polish     \(afterPolish)\(afterPolish == afterVocabulary ? "   (no change)" : "")")
 
-    let availability = TranscriptCleaner.availability()
-    print("model      \(availability.explanation)")
-    guard availability.isReady else { return }
-
+    let deadline = Duration.seconds(Int(arguments.option("deadline").flatMap(Int.init) ?? 10))
     let started = Date()
-    let outcome = await TranscriptCleaner().clean(
-        afterPolish, deadline: .seconds(Int(arguments.option("deadline").flatMap(Int.init) ?? 10)))
+    let outcome: TranscriptCleaner.Outcome
+    switch arguments.option("engine") ?? "ondevice" {
+    case "claude":
+        // The environment first, so the harness works without touching the
+        // app's keychain item — reading that from a different binary makes
+        // macOS ask the user for permission.
+        let environment = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+        guard let key = environment.flatMap({ $0.isEmpty ? nil : $0 }) ?? AnthropicKeychain.read() else {
+            fail("no Anthropic API key: set ANTHROPIC_API_KEY or save one in the dashboard")
+        }
+        print("model      \(ClaudeCleaner.model)")
+        outcome = await ClaudeCleaner(apiKey: key).clean(afterPolish, deadline: deadline)
+    case "ondevice":
+        let availability = TranscriptCleaner.availability()
+        print("model      \(availability.explanation)")
+        guard availability.isReady else { return }
+        outcome = await TranscriptCleaner().clean(afterPolish, deadline: deadline)
+    case let other:
+        fail("unknown engine “\(other)”; use ondevice or claude")
+    }
     let elapsed = Date().timeIntervalSince(started)
     print("cleanup    \(outcome.text)")
     print(String(format: "           %@ in %.2f s", outcome.changed ? "changed" : "unchanged", elapsed))
@@ -389,8 +404,9 @@ func commandHelp() {
           wizardsper-cli sweep <audio> --reference "ground truth" [--model DIR | --tier 560]
               Transcribe under every framing policy and score them side by side.
 
-          wizardsper-cli clean "a transcript" [--deadline 10]
-              Run vocabulary, polish and on-device clean-up, showing each stage.
+          wizardsper-cli clean "a transcript" [--deadline 10] [--engine ondevice|claude]
+              Run vocabulary, polish and clean-up, showing each stage. The claude
+              engine reads ANTHROPIC_API_KEY, then the key saved in the dashboard.
 
           wizardsper-cli listen [--seconds 4]
               Run the live capture path (engine, tap, converter, ring) and report

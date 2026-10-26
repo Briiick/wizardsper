@@ -1,6 +1,17 @@
 import AppKit
 import Foundation
 
+/// Who rewrites the transcript.
+///
+/// A choice the user makes, never a fallback: the two differ in the one way
+/// that matters most for a dictation app — whether the words leave the Mac.
+public enum CleanupEngine: String, Sendable, Equatable, Codable, CaseIterable {
+    /// Apple's on-device model. Free, private, needs Apple Intelligence.
+    case onDevice
+    /// Claude Haiku 5.5 over the Anthropic API, on the user's own key.
+    case claude
+}
+
 /// Where cleanup is allowed to run.
 ///
 /// Cleanup is a rewrite, and there are places a rewrite is simply wrong however
@@ -25,10 +36,14 @@ public struct CleanupPolicy: Sendable, Equatable, Codable {
         excludedBundleIDs =
             try container.decodeIfPresent([String].self, forKey: .excludedBundleIDs)
             ?? CleanupPolicy.defaultExclusions
+        engine = try container.decodeIfPresent(CleanupEngine.self, forKey: .engine) ?? .onDevice
     }
 
 
     public var enabled: Bool
+
+    /// Which model does the rewrite. See `CleanupEngine`.
+    public var engine: CleanupEngine
 
     /// Run the rewrite to completion instead of racing a stopwatch.
     ///
@@ -72,9 +87,11 @@ public struct CleanupPolicy: Sendable, Equatable, Codable {
         enabled: Bool = false,
         waitsForCompletion: Bool = false,
         deadlineSeconds: Double = 1.5,
-        excludedBundleIDs: [String] = CleanupPolicy.defaultExclusions
+        excludedBundleIDs: [String] = CleanupPolicy.defaultExclusions,
+        engine: CleanupEngine = .onDevice
     ) {
         self.enabled = enabled
+        self.engine = engine
         self.waitsForCompletion = waitsForCompletion
         self.deadlineSeconds = deadlineSeconds
         self.excludedBundleIDs = excludedBundleIDs

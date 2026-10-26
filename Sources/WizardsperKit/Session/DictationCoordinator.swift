@@ -280,7 +280,7 @@ public final class DictationCoordinator {
         drain = Task { [weak self] in
             await self?.pump(id, asr: asr)
         }
-        if settings.cleanup.enabled {
+        if settings.cleanup.enabled, settings.cleanup.engine == .onDevice {
             // Loading the language model takes far longer than generating with
             // it. Starting that at key-down spends the whole hold on it, so the
             // rewrite at the end is only the generation.
@@ -444,7 +444,7 @@ public final class DictationCoordinator {
         let policy = settings.cleanup
         if policy.allows(bundleID: CleanupPolicy.frontmostBundleID()) {
             snapshot.transcript = transcript
-            let result = await cleaner.clean(transcript, deadline: policy.deadline)
+            let result = await clean(transcript, policy: policy)
             guard sessionID == id else { return }
             delivered = result.text
             lastCleanupNote = result.note
@@ -463,6 +463,21 @@ public final class DictationCoordinator {
             trailingSpace: settings.appendTrailingSpace)
         guard sessionID == id else { return }
         finalize(outcome, for: id, duration: held)
+    }
+
+    /// Run the rewrite on whichever engine the user picked.
+    private func clean(_ transcript: String, policy: CleanupPolicy) async -> TranscriptCleaner.Outcome {
+        switch policy.engine {
+        case .onDevice:
+            return await cleaner.clean(transcript, deadline: policy.deadline)
+        case .claude:
+            // Read per session rather than cached, so a key pasted into the
+            // dashboard, or removed from it, takes effect on the next hold.
+            guard let key = AnthropicKeychain.read() else {
+                return .init(text: transcript, changed: false, note: "Add an Anthropic API key to clean up with Claude")
+            }
+            return await ClaudeCleaner(apiKey: key).clean(transcript, deadline: policy.deadline)
+        }
     }
 
     /// Capture died in a way the session cannot survive.

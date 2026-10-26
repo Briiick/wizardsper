@@ -15,6 +15,18 @@ struct CleanupSection: View {
     let model: DashboardModel
 
     @State private var availability: TranscriptCleaner.Availability = .other("Checking…")
+    /// Whether a key is in the keychain. The key itself is never held in view
+    /// state once saved — only what the user is typing before they save it.
+    @State private var hasAPIKey = false
+    @State private var draftKey = ""
+    @State private var keyError: String?
+
+    private var engineIsReady: Bool {
+        switch settings.cleanup.engine {
+        case .onDevice: return availability.isReady
+        case .claude: return hasAPIKey
+        }
+    }
 
     var body: some View {
         Section {
@@ -35,19 +47,24 @@ struct CleanupSection: View {
         }
 
         Section {
-            Toggle("Rewrite transcripts into written English", isOn: $settings.cleanup.enabled)
-                .disabled(!availability.isReady)
-
-            LabeledContent("On-device model") {
-                HStack(spacing: 6) {
-                    Image(systemName: availability.isReady ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .foregroundStyle(availability.isReady ? Color.green : Color.orange)
-                    Text(availability.isReady ? "Ready" : availability.explanation)
-                        .foregroundStyle(.secondary)
-                }
+            Picker("Model", selection: $settings.cleanup.engine) {
+                Text("Apple on-device").tag(CleanupEngine.onDevice)
+                Text("Claude Haiku 5.5 (your API key)").tag(CleanupEngine.claude)
             }
 
-            if availability == .appleIntelligenceOff {
+            Toggle("Rewrite transcripts into written English", isOn: $settings.cleanup.enabled)
+                .disabled(!engineIsReady && !settings.cleanup.enabled)
+
+            switch settings.cleanup.engine {
+            case .onDevice:
+                LabeledContent("On-device model") {
+                    status(ready: availability.isReady, text: availability.isReady ? "Ready" : availability.explanation)
+                }
+            case .claude:
+                apiKeyControls
+            }
+
+            if settings.cleanup.engine == .onDevice, availability == .appleIntelligenceOff {
                 Button("Open Apple Intelligence settings…") {
                     if let url = URL(
                         string: "x-apple.systempreferences:com.apple.preference.security?AppleIntelligence")
@@ -66,7 +83,7 @@ struct CleanupSection: View {
                 )
 
                 LabeledContent("Give up after") {
-                    Slider(value: $settings.cleanup.deadlineSeconds, in: 0.5...4, step: 0.25) {
+                    Slider(value: $settings.cleanup.deadlineSeconds, in: 0.5...8, step: 0.25) {
                         Text("Give up after")
                     }
                     .frame(width: 180)
@@ -85,12 +102,78 @@ struct CleanupSection: View {
         } header: {
             Text("Clean-up")
         } footer: {
-            Text(
-                "One pass over the finished transcript, using Apple's on-device model, after you release the key. Nothing leaves your Mac, and sampling is greedy, so the same words always produce the same result. It rewrites what you said, so it is checked against the original and discarded if it strays, answers you, or finishes a sentence you did not — and it never runs in Terminal, Xcode or a code editor, where text has to be verbatim."
-            )
+            Text(footer)
         }
         .task {
             availability = TranscriptCleaner.availability()
+            hasAPIKey = AnthropicKeychain.hasKey
+        }
+    }
+
+    private var footer: String {
+        let guardrail =
+            "It rewrites what you said, so it is checked against the original and discarded if it strays, answers you, or finishes a sentence you did not — and it never runs in Terminal, Xcode or a code editor, where text has to be verbatim."
+        switch settings.cleanup.engine {
+        case .onDevice:
+            return
+                "One pass over the finished transcript, using Apple's on-device model, after you release the key. Nothing leaves your Mac, and sampling is greedy, so the same words always produce the same result. "
+                + guardrail
+        case .claude:
+            return
+                "One pass over the finished transcript, using Claude Haiku 5.5, after you release the key and before it pastes. Your transcript is sent to Anthropic and billed to your API key — a fraction of a cent per dictation. Allow a couple of seconds before giving up: this is a network round trip. "
+                + guardrail
+        }
+    }
+
+    @ViewBuilder
+    private var apiKeyControls: some View {
+        if hasAPIKey {
+            LabeledContent("Anthropic API key") {
+                HStack(spacing: 8) {
+                    status(ready: true, text: "Saved in your keychain")
+                    Button("Remove") {
+                        AnthropicKeychain.delete()
+                        hasAPIKey = false
+                        // A rewrite that can no longer run should not look switched on.
+                        settings.cleanup.enabled = false
+                    }
+                }
+            }
+        } else {
+            LabeledContent("Anthropic API key") {
+                HStack(spacing: 8) {
+                    SecureField("sk-ant-…", text: $draftKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 220)
+                        .onSubmit(saveKey)
+                    Button("Save", action: saveKey)
+                        .disabled(draftKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            if let keyError {
+                Label(keyError, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func saveKey() {
+        guard AnthropicKeychain.save(draftKey) else {
+            keyError = "Could not save the key to your keychain."
+            return
+        }
+        draftKey = ""
+        keyError = nil
+        hasAPIKey = true
+    }
+
+    private func status(ready: Bool, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle")
+                .foregroundStyle(ready ? Color.green : Color.orange)
+            Text(text)
+                .foregroundStyle(.secondary)
         }
     }
 }
