@@ -82,16 +82,23 @@ struct CleanupSection: View {
                     "One pass, run to completion, after you release the key. The same dictation always produces the same result — but the paste waits for it."
                 )
 
+                // Replaced rather than greyed out while the rewrite always
+                // finishes: a disabled slider reads as broken, when the truth is
+                // that there is no deadline to set.
                 LabeledContent("Give up after") {
-                    Slider(value: $settings.cleanup.deadlineSeconds, in: 0.5...8, step: 0.25) {
-                        Text("Give up after")
+                    if settings.cleanup.waitsForCompletion {
+                        Text("Never — waits for the rewrite (\(CleanupPolicy.safetyCeiling.components.seconds) s limit)")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Slider(value: $settings.cleanup.deadlineSeconds, in: 0.5...8, step: 0.25) {
+                            Text("Give up after")
+                        }
+                        .frame(width: 180)
+                        Text(String(format: "%.2fs", settings.cleanup.deadlineSeconds))
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(width: 180)
-                    Text(String(format: "%.2fs", settings.cleanup.deadlineSeconds))
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
                 }
-                .disabled(settings.cleanup.waitsForCompletion)
 
                 if let note = model.lastCleanupNote {
                     Label(note, systemImage: "info.circle")
