@@ -85,6 +85,18 @@ public final class DictationCoordinator {
     /// dominant cost.
     private let feedFrames = 4096
 
+    /// How long the microphone stays open after the chord comes up.
+    ///
+    /// People let go of the key *as* they finish speaking, not after: the
+    /// release lands on the last syllable, and the trailing consonant of the
+    /// final word is still leaving their mouth. On top of that, the tap hands
+    /// over audio in ~46 ms buffers, and tearing the engine down throws away
+    /// the one being filled. Stopping capture the instant the key came up lost
+    /// both, and the visible symptom was the last word of a sentence silently
+    /// missing. 300 ms covers a word's tail with margin and stays well under
+    /// the point where the paste starts to feel late.
+    private static let releaseTail: Duration = .milliseconds(300)
+
     /// Share of samples at the rails above which clipping, rather than silence,
     /// is the better explanation for an empty transcript. Ordinary speech
     /// touches full scale occasionally; 2% of every sample in a hold does not
@@ -361,6 +373,18 @@ public final class DictationCoordinator {
             finalize(.failed(.modelsMissing("the recogniser went away mid-session")), for: id)
             return
         }
+
+        // Measured at the release, before the tail: the tail is ours, not the
+        // user's, and counting it would let a brushed key clear the
+        // minimum-hold threshold.
+        let held = Date().timeIntervalSince(sessionStart ?? Date())
+
+        // Keep listening briefly — the pump is still running and feeding the
+        // recogniser — so the end of the last word is captured. See
+        // `releaseTail`.
+        try? await Task.sleep(for: Self.releaseTail)
+        guard sessionID == id else { return }
+
         // Stop the producer before touching the ring: `read` is only safe
         // against a live writer for the SPSC handoff, and the drain below is
         // about to run to empty.
@@ -389,7 +413,6 @@ public final class DictationCoordinator {
             guard sessionID == id else { return }
         }
 
-        let held = Date().timeIntervalSince(sessionStart ?? Date())
         let dropped = ring.droppedFrames
         if dropped > 0 {
             Log.audio.notice("Session \(id.description, privacy: .public) dropped \(dropped) frames")
