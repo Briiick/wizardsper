@@ -10,7 +10,8 @@ import Foundation
 /// general pasteboard and synthesise Cmd-V. That borrows a system-wide resource
 /// the user did not offer us, so everything here exists to give it back — the
 /// pasteboard is captured item-by-item and type-by-type before we clear it, and
-/// restored afterwards only if nothing else claimed it in the meantime.
+/// restored afterwards only once the target has had time to read the
+/// transcript, and only if nothing else claimed the pasteboard in the meantime.
 ///
 /// Main-actor isolated because `NSPasteboard` and `NSWorkspace` are, and because
 /// the whole sequence must observe one consistent pasteboard state: a snapshot
@@ -19,20 +20,40 @@ import Foundation
 @MainActor
 public enum Paster {
 
-    /// How long the target app gets to read the pasteboard before we put the old
-    /// contents back. Cmd-V is asynchronous: `post` only hands the event to the
-    /// window server, and the app then has to be scheduled, receive it, and read
-    /// the pasteboard. Restoring immediately would swap the contents out from
-    /// under a paste that has not happened yet and the user would get their
-    /// previous clipboard instead of their words. 150 ms is comfortably longer
-    /// than a healthy app's turnaround while still being under the threshold
-    /// where a person would notice their clipboard "stuck" on the transcript.
-    private static let pasteboardReadDelay: Duration = .milliseconds(150)
+    /// The least time the target app gets to read the pasteboard before we put
+    /// the old contents back.
+    ///
+    /// Cmd-V is asynchronous: `post` only hands the event to the window server,
+    /// and the app then has to be scheduled, receive it, and read the
+    /// pasteboard. Restore before that and the app reads the *previous*
+    /// clipboard instead of the transcript. If that was an image or a file, a
+    /// text field accepts nothing at all, so the user sees "Pasted" over an
+    /// unchanged document. A fixed 150 ms did exactly that whenever the target
+    /// was briefly busy, and the end of a dictation, with the recogniser and
+    /// cleanup both finishing, is when it is most likely to be.
+    ///
+    /// The floor covers the part of the trip the responsiveness check below
+    /// cannot see: the window server routing the keystroke to the app.
+    private static let pasteboardReadFloor: Duration = .milliseconds(250)
+
+    /// How long after the target proves it is responsive we still leave the
+    /// transcript in place. The keystroke was queued before our question, so an
+    /// app that has answered has the keystroke in hand or next in line; this is
+    /// the margin for it to finish handling it and read the pasteboard.
+    private static let pasteboardReadGrace: Duration = .milliseconds(150)
+
+    /// The longest we wait for the target to respond at all. An app that has
+    /// not answered by then is hung, and will act on the Cmd-V whenever it
+    /// recovers — reading whatever is on the pasteboard at that moment.
+    private static let responsivenessTimeout: Duration = .seconds(2)
 
     /// `kVK_ANSI_V`. Hard-coded rather than imported from Carbon's HIToolbox: it
     /// is a hardware-position code, fixed for all layouts, and the one Carbon
     /// symbol is not worth the framework.
     private static let virtualKeyV: CGKeyCode = 0x09
+
+    /// `kVK_Command`, the left Command key, hard-coded for the same reason.
+    private static let virtualKeyCommand: CGKeyCode = 0x37
 
     /// One (type, data) pair lifted off a pasteboard item while it was still
     /// readable.
@@ -110,47 +131,51 @@ public enum Paster {
             return .failed(.pasteFailed("the clipboard rejected the text"))
         }
 
-        guard autoPaste else {
-            Log.paste.debug("Auto-paste is off; leaving the transcript on the clipboard.")
-            return .copied(text, why: .autoPasteDisabled)
+        let target: Target
+        let keystroke: [CGEvent]
+        switch plan(autoPaste: autoPaste) {
+        case .copy(let why):
+            return .copied(text, why: why)
+        case .paste(let app, let events):
+            target = app
+            keystroke = events
         }
 
-        // Nothing to paste into means nothing to paste: a posted Cmd-V would go
-        // to whatever the window server decides is frontmost next, which could
-        // be an app the user never pointed at.
-        guard let target = NSWorkspace.shared.frontmostApplication else {
-            Log.paste.debug("No frontmost application; copied instead of pasting.")
-            return .copied(text, why: .noTarget)
-        }
-        // `Bundle.main.bundleIdentifier` is nil for the CLI target, so compare
-        // only when we actually have an identity — otherwise a nil-equals-nil
-        // match would make every paste look like a paste into ourselves.
-        if let ourBundleID = Bundle.main.bundleIdentifier,
-            target.bundleIdentifier == ourBundleID
-        {
-            Log.paste.debug("Wizardsper is frontmost; copied instead of pasting into ourselves.")
-            return .copied(text, why: .noTarget)
+        // The HID tap is the lowest point in the chain, so the events pass
+        // through the same session taps and input methods as a real keystroke
+        // instead of arriving somewhere downstream of them.
+        for event in keystroke {
+            event.post(tap: .cghidEventTap)
         }
 
-        // Synthetic events from an untrusted process are dropped by the window
-        // server without any error reaching us. Posting anyway would look, from
-        // the user's side, exactly like Wizardsper losing the transcript. The text
-        // is on the clipboard, so this is `.copied`, not `.failed`.
-        guard AXIsProcessTrusted() else {
-            Log.paste.notice("Accessibility not granted; copied instead of pasting.")
-            return .copied(text, why: .accessibilityDenied)
+        // Without a snapshot there is nothing to put back, so nothing to time
+        // and no reason to hold the session open waiting.
+        guard restorePasteboard, captured.contains(where: { !$0.payloads.isEmpty }) else {
+            Log.paste.notice("Posted Cmd-V to \(target.name, privacy: .public); nothing to restore.")
+            return .pasted(text)
         }
 
-        guard postCommandV() else {
-            // The transcript is still on the clipboard, so the user has not lost
-            // anything — but event creation failing is not normal, so it is
-            // logged at error level rather than passed over.
-            Log.paste.error("Could not synthesise Cmd-V; copied instead of pasting.")
-            return .copied(text, why: .accessibilityDenied)
+        // The restore is timed from when the target is demonstrably running, not
+        // from when we posted. A fixed delay is a guess about how busy the app
+        // is; asking it a question and waiting for the answer measures it.
+        let clock = ContinuousClock()
+        let posted = clock.now
+        let responded = await waitUntilResponsive(target.pid, timeout: responsivenessTimeout)
+        let respondedAfter = posted.duration(to: clock.now)
+
+        guard responded else {
+            // Hung past the timeout. It will act on the Cmd-V when it recovers,
+            // and reads the pasteboard then, so restoring now would turn this
+            // paste into the old clipboard. Keeping the transcript costs the user
+            // their old clipboard, but their words still land.
+            Log.paste.notice(
+                "\(target.name, privacy: .public) did not respond within \(milliseconds(respondedAfter), privacy: .public) ms; leaving the transcript on the clipboard.")
+            return .pasted(text)
         }
 
+        let restoreAt = max(pasteboardReadFloor, respondedAfter + pasteboardReadGrace)
         do {
-            try await Task.sleep(for: pasteboardReadDelay)
+            try await Task.sleep(for: restoreAt - posted.duration(to: clock.now))
         } catch {
             // Cancelled mid-flight. The key event is already out, and we no
             // longer know whether the target has read the pasteboard, so putting
@@ -162,10 +187,71 @@ public enum Paster {
             return .pasted(text)
         }
 
-        if restorePasteboard {
-            restore(captured, to: pasteboard, ifChangeCountIs: ownedChangeCount)
-        }
+        Log.paste.notice(
+            "Pasted into \(target.name, privacy: .public), which responded after \(milliseconds(respondedAfter), privacy: .public) ms; restoring at \(milliseconds(restoreAt), privacy: .public) ms.")
+        restore(captured, to: pasteboard, ifChangeCountIs: ownedChangeCount)
         return .pasted(text)
+    }
+
+    // MARK: - Deciding
+
+    /// The app a paste is aimed at: the pid to check on, the name to log.
+    private struct Target {
+        let pid: pid_t
+        let name: String
+    }
+
+    /// What `deliver` does once the text is on the pasteboard.
+    private enum Plan {
+        /// Leave it there, for this reason.
+        case copy(CopyReason)
+        /// Send `keystroke` to `target`.
+        case paste(target: Target, keystroke: [CGEvent])
+    }
+
+    /// Settle whether a paste can happen.
+    private static func plan(autoPaste: Bool) -> Plan {
+        guard autoPaste else {
+            Log.paste.debug("Auto-paste is off; leaving the transcript on the clipboard.")
+            return .copy(.autoPasteDisabled)
+        }
+
+        // Nothing to paste into means nothing to paste: a posted Cmd-V would go
+        // to whatever the window server decides is frontmost next, which could
+        // be an app the user never pointed at.
+        guard let target = NSWorkspace.shared.frontmostApplication else {
+            Log.paste.debug("No frontmost application; copied instead of pasting.")
+            return .copy(.noTarget)
+        }
+        // `Bundle.main.bundleIdentifier` is nil for the CLI target, so compare
+        // only when we actually have an identity — otherwise a nil-equals-nil
+        // match would make every paste look like a paste into ourselves.
+        if let ourBundleID = Bundle.main.bundleIdentifier,
+            target.bundleIdentifier == ourBundleID
+        {
+            Log.paste.debug("Wizardsper is frontmost; copied instead of pasting into ourselves.")
+            return .copy(.noTarget)
+        }
+
+        // Synthetic events from an untrusted process are dropped by the window
+        // server without any error reaching us. Posting anyway would look, from
+        // the user's side, exactly like Wizardsper losing the transcript. The text
+        // is on the clipboard, so this is `.copied`, not `.failed`.
+        guard AXIsProcessTrusted() else {
+            Log.paste.notice("Accessibility not granted; copied instead of pasting.")
+            return .copy(.accessibilityDenied)
+        }
+
+        guard let keystroke = makeCommandV() else {
+            // The transcript is still on the clipboard, so the user has not lost
+            // anything — but event creation failing is not normal, so it is
+            // logged at error level rather than passed over.
+            Log.paste.error("Could not synthesise Cmd-V; copied instead of pasting.")
+            return .copy(.accessibilityDenied)
+        }
+
+        let name = target.bundleIdentifier ?? target.localizedName ?? "pid \(target.processIdentifier)"
+        return .paste(target: Target(pid: target.processIdentifier, name: name), keystroke: keystroke)
     }
 
     // MARK: - Pasteboard snapshot
@@ -249,21 +335,66 @@ public enum Paster {
         }
     }
 
+    // MARK: - Responsiveness
+
+    /// Ask the target a trivial Accessibility question and wait for its answer.
+    /// Returns false if it did not answer within `timeout`.
+    ///
+    /// An Accessibility request is served by the app's own main thread, so the
+    /// answer cannot come back while that thread is stalled — which is exactly
+    /// the condition under which a queued Cmd-V has not been handled yet. Any
+    /// answer counts, an error included: `.noValue` from an app with nothing
+    /// focused still proves it is running. Only `.cannotComplete`, which is
+    /// what a timeout or a hung app produces, means it is not.
+    ///
+    /// Run off the main actor because the call blocks, and blocking here would
+    /// be worse than slow: the target's paste may need to read the pasteboard
+    /// from *us*, and a main thread parked waiting on the target could not
+    /// answer it.
+    private static func waitUntilResponsive(_ pid: pid_t, timeout: Duration) async -> Bool {
+        let seconds = Float(milliseconds(timeout)) / 1000
+        return await Task.detached(priority: .userInitiated) {
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, seconds)
+            var focused: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(
+                app, kAXFocusedUIElementAttribute as CFString, &focused)
+            return result != .cannotComplete
+        }.value
+    }
+
+    /// Whole milliseconds in `duration`, for log lines.
+    private static func milliseconds(_ duration: Duration) -> Int64 {
+        let (seconds, attoseconds) = duration.components
+        return seconds * 1000 + attoseconds / 1_000_000_000_000_000
+    }
+
     // MARK: - Key event
 
-    /// Post Cmd-V as a down/up pair. Returns false if the events could not be
-    /// built; a successful post says nothing about whether the target acted on it.
-    private static func postCommandV() -> Bool {
-        // One source for both halves so the window server sees them as a single
-        // device's keystroke rather than two unrelated events. Combined session
+    /// Build Cmd-V as the four events a real keystroke produces: Command down,
+    /// V down, V up, Command up. Returns nil if the events could not be built.
+    ///
+    /// The Command key gets its own events rather than only riding along as a
+    /// flag on V. A flag-only Cmd-V works for an app that reads the flags off
+    /// the key event, but not for one that asks for the *live* modifier state
+    /// as it handles the event — and that state only changes on a Command
+    /// key event. Sending one costs nothing and removes the difference between
+    /// our keystroke and the user's.
+    private static func makeCommandV() -> [CGEvent]? {
+        // One source for every event so the window server sees them as a single
+        // device's keystroke rather than unrelated events. Combined session
         // state is the table that reflects the real hardware the user is holding.
         guard let source = CGEventSource(stateID: .combinedSessionState),
+            let commandDown = CGEvent(
+                keyboardEventSource: source, virtualKey: virtualKeyCommand, keyDown: true),
             let keyDown = CGEvent(
                 keyboardEventSource: source, virtualKey: virtualKeyV, keyDown: true),
             let keyUp = CGEvent(
-                keyboardEventSource: source, virtualKey: virtualKeyV, keyDown: false)
+                keyboardEventSource: source, virtualKey: virtualKeyV, keyDown: false),
+            let commandUp = CGEvent(
+                keyboardEventSource: source, virtualKey: virtualKeyCommand, keyDown: false)
         else {
-            return false
+            return nil
         }
 
         // Assignment, deliberately not `insert` into the live modifier state. The
@@ -272,15 +403,13 @@ public enum Paster {
         // fingers do not lift instantly. A held Fn riding along with Cmd-V is a
         // different chord as far as the target app is concerned, and events
         // created from a live source inherit whatever is physically down. Stating
-        // the flags exactly guarantees the app sees a plain Cmd-V.
+        // the flags exactly guarantees the app sees a plain Cmd-V, and an empty
+        // set on the final Command-up leaves no modifier latched behind it.
+        commandDown.flags = .maskCommand
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
+        commandUp.flags = []
 
-        // The HID tap is the lowest point in the chain, so the event passes
-        // through the same session taps and input methods as a real keystroke
-        // instead of arriving somewhere downstream of them.
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        return true
+        return [commandDown, keyDown, keyUp, commandUp]
     }
 }
